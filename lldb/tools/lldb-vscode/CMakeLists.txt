@@ -6,6 +6,10 @@ if (HAVE_LIBPTHREAD)
   list(APPEND extra_libs pthread)
 endif ()
 
+set(LLDBLIB liblldb)
+if (USE_XCODE_LLDB_FRAMEWORK)
+  set(LLDBLIB ${USE_XCODE_LLDB_FRAMEWORK})
+endif ()
 
 if(APPLE)
   configure_file(
@@ -38,7 +42,7 @@ add_lldb_tool(lldb-vscode
   VSCode.cpp
 
   LINK_LIBS
-    liblldb
+    ${LLDBLIB}
     ${extra_libs}
 
   LINK_COMPONENTS
@@ -50,11 +54,12 @@ if(LLDB_BUILD_FRAMEWORK)
   # In the build-tree, we know the exact path to the framework directory.
   # The installed framework can be in different locations.
   lldb_setup_rpaths(lldb-vscode
-    BUILD_RPATH
-      "${LLDB_FRAMEWORK_ABSOLUTE_BUILD_DIR}"
+    # BUILD_RPATH
+      # "${LLDB_FRAMEWORK_ABSOLUTE_BUILD_DIR}"
     INSTALL_RPATH
       "@loader_path/../../../SharedFrameworks"
       "@loader_path/../../System/Library/PrivateFrameworks"
       "@loader_path/../../Library/PrivateFrameworks"
+      "/var/db/xcode_select_link/../SharedFrameworks"
   )
 endif()
