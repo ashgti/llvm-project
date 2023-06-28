@@ -376,6 +376,30 @@ function(lldb_find_system_debugserver path)
   endif()
 endfunction()
 
+function(lldb_find_system_framework path)
+  execute_process(COMMAND xcode-select -p
+                  RESULT_VARIABLE exit_code
+                  OUTPUT_VARIABLE xcode_dev_dir
+                  ERROR_VARIABLE error_msg
+                  OUTPUT_STRIP_TRAILING_WHITESPACE)
+  if(exit_code)
+    message(WARNING "`xcode-select -p` failed:\n${error_msg}")
+  else()
+    set(subpath "LLDB.framework")
+    set(path_shared "${xcode_dev_dir}/../SharedFrameworks/${subpath}")
+    set(path_private "${xcode_dev_dir}/Library/PrivateFrameworks/${subpath}")
+
+    if(EXISTS ${path_shared})
+      set(${path} ${path_shared} PARENT_SCOPE)
+    elseif(EXISTS ${path_private})
+      set(${path} ${path_private} PARENT_SCOPE)
+    else()
+      message(WARNING "System LLDB.framework requested, but not found. "
+                      "Candidates don't exist: ${path_shared}\n${path_private}")
+    endif()
+  endif()
+endfunction()
+
 function(lldb_find_python_module module)
   set(MODULE_FOUND PY_${module}_FOUND)
   if (DEFINED ${MODULE_FOUND})
