@@ -20,6 +20,9 @@
 	"categories": [
 		"Debuggers"
 	],
+	"activationEvents": [
+    "onDebug"
+	],
 	"private": true,
 	"devDependencies": {
 		"@types/node": "7.0.43",

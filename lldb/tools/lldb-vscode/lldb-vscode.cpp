@@ -788,7 +788,7 @@ void request_continue(const llvm::json::Object &request) {
   llvm::json::Object response;
   FillResponse(request, response);
   lldb::SBProcess process = g_vsc.target.GetProcess();
-  auto arguments = request.getObject("arguments");
+  // auto arguments = request.getObject("arguments");
   // Invalidate the focused, continuing the process may land on any thread, not
   // just the current thread in which case we want the client to update focus to
   // the new stopped thread.
@@ -1566,6 +1566,36 @@ void request_initialize(const llvm::json::Object &request) {
   body.try_emplace("supportsStepInTargetsRequest", false);
   // The debug adapter supports the completions request.
   body.try_emplace("supportsCompletionsRequest", true);
+  // The debug adapter supports the disassembly request.
+  body.try_emplace("supportsDisassembleRequest", true);
+  // The debug adapter supports the setInstructionBreakpoints request.
+  body.try_emplace("supportsInstructionBreakpoints", true);
+  // The debug adapter supports single thread execution requests.
+  body.try_emplace("supportsSingleThreadExecutionRequests", true);
+  // The debug adapter supports stepping granularity.
+  body.try_emplace("supportsSteppingGranularity", true);
+  // 
+  body.try_emplace("supportsDataBreakpoints", true);
+
+  // thread state does not appear to be synced correctly
+
+  // supportsGotoTargetsRequest / supportsStepInTargetsRequest ??
+  // supportsMemoryReferences ??
+
+  // supportsLoadedSourcesRequest ? H
+
+  // supportsSetExpression ? M 
+  // supportsReadMemoryRequest ? M
+  // supportsWriteMemoryRequest ? M
+  // supportsBreakpointLocationsRequest ? M
+  
+  // supportSuspendDebuggee ? L
+  // supportsClipboardContext ? L
+  // supportsExceptionFilterOptions ? L
+  // supportsTerminateRequest ? L
+
+  // supportsTerminateThreadsRequest ? NS
+  // supportsCancelRequest ? NS
 
   llvm::json::Array completion_characters;
   completion_characters.emplace_back(".");
@@ -2733,11 +2763,19 @@ void request_stackTrace(const llvm::json::Object &request) {
 //   "properties": {
 //     "threadId": {
 //       "type": "integer",
-//       "description": "Execute 'stepIn' for this thread."
+//       "description": "Specifies the thread for which to resume execution for one step-into (of the given granularity)."
+//     },
+//     "singleThread": {
+//       "type": "boolean",
+//       "description": "If this flag is true, all other suspended threads are not resumed."
 //     },
 //     "targetId": {
 //       "type": "integer",
-//       "description": "Optional id of the target to step into."
+//       "description": "Id of the target to step into."
+//     },
+//     "granularity": {
+//       "$ref": "#/definitions/SteppingGranularity",
+//       "description": "Stepping granularity. If no granularity is specified, a granularity of `statement` is assumed."
 //     }
 //   },
 //   "required": [ "threadId" ]
@@ -2758,7 +2796,30 @@ void request_stepIn(const llvm::json::Object &request) {
     // Remember the thread ID that caused the resume so we can set the
     // "threadCausedFocus" boolean value in the "stopped" events.
     g_vsc.focus_tid = thread.GetThreadID();
-    thread.StepInto();
+
+    llvm::StringRef granularity = GetString(arguments, "granularity");
+    if (granularity == "instruction") {
+      thread.StepInstruction(false);
+    } else {
+      lldb::RunMode mode = lldb::RunMode::eOnlyDuringStepping;
+      if (GetBoolean(arguments, "singleThread", false)) {
+        mode = lldb::RunMode::eOnlyThisThread;
+      }
+
+      uint32_t end_line = LLDB_INVALID_LINE_NUMBER;
+
+      lldb::SBFrame frame = thread.GetFrameAtIndex(0);
+      if (granularity == "line" && frame.IsValid()) {
+        lldb::SBSymbolContext context = frame.GetSymbolContext(lldb::eSymbolContextEverything);
+        uint32_t curr_line = context.GetLineEntry().GetLine();
+        if (curr_line > 0 && curr_line != LLDB_INVALID_LINE_NUMBER) {
+          end_line = curr_line + 1;
+        }
+      }
+
+      lldb::SBError error; // Ignored
+      thread.StepInto(nullptr, end_line, error, mode);
+    }
   } else {
     response["success"] = llvm::json::Value(false);
   }
@@ -3170,7 +3231,7 @@ void request_variables(const llvm::json::Object &request) {
 
       // "error" owns the error string so we must keep it alive as long as we
       // want to use the returns "const char *"
-      lldb::SBError error = top_scope->GetError();
+      lldb::SBError error; // = top_scope->GetError();
       const char *var_err = error.GetCString();
       if (var_err) {
         // Create a fake variable named "error" to explain why variables were
@@ -3245,6 +3306,286 @@ void request_variables(const llvm::json::Object &request) {
   g_vsc.SendJSON(llvm::json::Value(std::move(response)));
 }
 
+// "DisassembleRequest": {
+//   "allOf": [ { "$ref": "#/definitions/Request" }, {
+//     "type": "object",
+//     "description": "Disassembles code stored at the provided location.\nClients should only call this request if the corresponding capability `supportsDisassembleRequest` is true.",
+//     "properties": {
+//       "command": {
+//         "type": "string",
+//         "enum": [ "disassemble" ]
+//       },
+//       "arguments": {
+//         "$ref": "#/definitions/DisassembleArguments"
+//       }
+//     },
+//     "required": [ "command", "arguments" ]
+//   }]
+// },
+// "DisassembleArguments": {
+//   "type": "object",
+//   "description": "Arguments for `disassemble` request.",
+//   "properties": {
+//     "memoryReference": {
+//       "type": "string",
+//       "description": "Memory reference to the base location containing the instructions to disassemble."
+//     },
+//     "offset": {
+//       "type": "integer",
+//       "description": "Offset (in bytes) to be applied to the reference location before disassembling. Can be negative."
+//     },
+//     "instructionOffset": {
+//       "type": "integer",
+//       "description": "Offset (in instructions) to be applied after the byte offset (if any) before disassembling. Can be negative."
+//     },
+//     "instructionCount": {
+//       "type": "integer",
+//       "description": "Number of instructions to disassemble starting at the specified location and offset.\nAn adapter must return exactly this number of instructions - any unavailable instructions should be replaced with an implementation-defined 'invalid instruction' value."
+//     },
+//     "resolveSymbols": {
+//       "type": "boolean",
+//       "description": "If true, the adapter should attempt to resolve memory addresses and other values to symbolic names."
+//     }
+//   },
+//   "required": [ "memoryReference", "instructionCount" ]
+// },
+// "DisassembleResponse": {
+//   "allOf": [ { "$ref": "#/definitions/Response" }, {
+//     "type": "object",
+//     "description": "Response to `disassemble` request.",
+//     "properties": {
+//       "body": {
+//         "type": "object",
+//         "properties": {
+//           "instructions": {
+//             "type": "array",
+//             "items": {
+//               "$ref": "#/definitions/DisassembledInstruction"
+//             },
+//             "description": "The list of disassembled instructions."
+//           }
+//         },
+//         "required": [ "instructions" ]
+//       }
+//     }
+//   }]
+// }
+void request_disassemble(const llvm::json::Object &request) {
+  llvm::json::Object response;
+  FillResponse(request, response);
+  auto arguments = request.getObject("arguments");
+  
+  auto memoryReference = GetString(arguments, "memoryReference");
+  lldb::addr_t addr_ptr;
+  if (memoryReference.consumeInteger(0, addr_ptr)) {
+    response["success"] = false;
+    response["message"] = "Malformed memory reference." + memoryReference.str();
+    g_vsc.SendJSON(llvm::json::Value(std::move(response)));
+    return;
+  }
+
+  addr_ptr += GetSigned(arguments, "instructionOffset", 0);
+  lldb::SBAddress addr(addr_ptr, g_vsc.target);
+  if (!addr.IsValid()) {
+    response["success"] = false;
+    response["message"] = "Memory reference not found in the current binary.";
+    g_vsc.SendJSON(llvm::json::Value(std::move(response)));
+    return;
+  }
+
+  const auto inst_count = GetUnsigned(arguments, "instructionCount", 0);
+  lldb::SBInstructionList insts = g_vsc.target.ReadInstructions(addr, inst_count);
+
+  if (!insts.IsValid()) {
+    response["success"] = false;
+    response["message"] = "Failed to find instructions for memory address.";
+    g_vsc.SendJSON(llvm::json::Value(std::move(response)));
+    return;
+  }
+
+  const bool resolve = GetBoolean(arguments, "resolveSymbols", false);
+  llvm::json::Array instructions;
+  const auto num_insts = insts.GetSize();
+  for (size_t i = 0; i < num_insts; ++i) {
+    lldb::SBInstruction inst = insts.GetInstructionAtIndex(i);
+    auto addr = inst.GetAddress();
+    const auto inst_addr = addr.GetLoadAddress(g_vsc.target);
+    const char *m = inst.GetMnemonic(g_vsc.target);
+    const char *o = inst.GetOperands(g_vsc.target);
+    const char *c = inst.GetComment(g_vsc.target);
+
+    std::string instruction;
+    llvm::raw_string_ostream ss(instruction);
+    ss << llvm::formatv("{0,7} {1,12}", m, o);
+    if (c && c[0]) {
+      ss << " ; " << c;
+    }
+    ss.flush();
+
+    llvm::json::Object disassembled_inst{{"address", "0x" + llvm::utohexstr(inst_addr)}, {"instruction", instruction}};
+
+    if (resolve) {
+      const auto sym = addr.GetSymbol();
+      if (sym)
+        disassembled_inst.try_emplace("symbol", sym.GetDisplayName());
+    }
+
+    auto line_entry = addr.GetLineEntry();
+    if (line_entry.IsValid() && line_entry.GetFileSpec().IsValid() && line_entry.GetLine() != 0) {
+      auto source = CreateSource(line_entry);
+      disassembled_inst.try_emplace("location", source);
+      const auto line = line_entry.GetLine();
+      if (line && line != LLDB_INVALID_LINE_NUMBER) {
+        disassembled_inst.try_emplace("line", line);
+      }
+      const auto column = line_entry.GetColumn();
+      if (column && column != LLDB_INVALID_COLUMN_NUMBER) {
+        disassembled_inst.try_emplace("column", column);
+      }
+    }
+
+    instructions.emplace_back(std::move(disassembled_inst));
+  }
+
+  llvm::json::Object body;
+  body.try_emplace("instructions", std::move(instructions));
+  response.try_emplace("body", std::move(body));
+  g_vsc.SendJSON(llvm::json::Value(std::move(response)));
+}
+
+// "SetInstructionBreakpointsRequest": {
+//   "allOf": [
+//     { "$ref": "#/definitions/Request" },
+//     {
+//       "type": "object",
+//       "description": "Replaces all existing instruction breakpoints. 
+//                       Typically, instruction breakpoints would be set from a 
+//                       disassembly window. \nTo clear all instruction 
+//                       breakpoints, specify an empty array.\nWhen an 
+//                       instruction breakpoint is hit, a `stopped` event (with
+//                       reason `instruction breakpoint`) is generated.\nClients
+//                       should only call this request if the corresponding 
+//                       capability `supportsInstructionBreakpoints` is true.",
+//       "properties": {
+//         "command": {
+//         "type": "string",
+//         "enum": [ "setInstructionBreakpoints" ]
+//       },
+//       "arguments": {
+//         "$ref": "#/definitions/SetInstructionBreakpointsArguments"
+//       }
+//     },
+//     "required": [ "command", "arguments" ]
+//   }]
+// },
+// "SetInstructionBreakpointsArguments": {
+//   "type": "object",
+//   "description": "Arguments for `setInstructionBreakpoints` request",
+//   "properties": {
+//     "breakpoints": {
+//       "type": "array",
+//       "items": {
+//         "$ref": "#/definitions/InstructionBreakpoint"
+//       },
+//       "description": "The instruction references of the breakpoints"
+//     }
+//   },
+//   "required": ["breakpoints"]
+// },
+// "SetInstructionBreakpointsResponse": {
+//   "allOf": [
+//     { "$ref": "#/definitions/Response" },
+//     {
+//       "type": "object",
+//       "description": "Response to `setInstructionBreakpoints` request",
+//       "properties": {
+//         "body": {
+//           "type": "object",
+//           "properties": {
+//             "breakpoints": {
+//               "type": "array",
+//               "items": {
+//                 "$ref": "#/definitions/Breakpoint"
+//               },
+//             "description": "Information about the breakpoints. The array 
+//                             elements correspond to the elements of the 
+//                             `breakpoints` array."
+//           }
+//         },
+//         "required": [ "breakpoints" ]
+//       }
+//     },
+//     "required": [ "body" ]
+//   }]
+// },
+void request_setInstructionBreakpoints(const llvm::json::Object &request) {
+  llvm::json::Object response;
+  FillResponse(request, response);
+
+  response.try_emplace("body", llvm::json::Object{{"breakpoints", llvm::json::Array()}});
+  g_vsc.SendJSON(llvm::json::Value(std::move(response)));
+}
+
+// "SetDataBreakpointsRequest": {
+//   "allOf": [ { "$ref": "#/definitions/Request" }, {
+//     "type": "object",
+//     "description": "Replaces all existing data breakpoints with new data breakpoints.\nTo clear all data breakpoints, specify an empty array.\nWhen a data breakpoint is hit, a `stopped` event (with reason `data breakpoint`) is generated.\nClients should only call this request if the corresponding capability `supportsDataBreakpoints` is true.",
+//     "properties": {
+//       "command": {
+//         "type": "string",
+//         "enum": [ "setDataBreakpoints" ]
+//       },
+//       "arguments": {
+//         "$ref": "#/definitions/SetDataBreakpointsArguments"
+//       }
+//     },
+//     "required": [ "command", "arguments"  ]
+//   }]
+// },
+// "SetDataBreakpointsArguments": {
+//   "type": "object",
+//   "description": "Arguments for `setDataBreakpoints` request.",
+//   "properties": {
+//     "breakpoints": {
+//       "type": "array",
+//       "items": {
+//         "$ref": "#/definitions/DataBreakpoint"
+//       },
+//       "description": "The contents of this array replaces all existing data breakpoints. An empty array clears all data breakpoints."
+//     }
+//   },
+//   "required": [ "breakpoints" ]
+// },
+// "SetDataBreakpointsResponse": {
+//   "allOf": [ { "$ref": "#/definitions/Response" }, {
+//     "type": "object",
+//     "description": "Response to `setDataBreakpoints` request.\nReturned is information about each breakpoint created by this request.",
+//     "properties": {
+//       "body": {
+//         "type": "object",
+//         "properties": {
+//           "breakpoints": {
+//             "type": "array",
+//             "items": {
+//               "$ref": "#/definitions/Breakpoint"
+//             },
+//             "description": "Information about the data breakpoints. The array elements correspond to the elements of the input argument `breakpoints` array."
+//           }
+//         },
+//         "required": [ "breakpoints" ]
+//       }
+//     },
+//     "required": [ "body" ]
+//   }]
+// },
+void request_setDataBreakpoints(const llvm::json::Object &request) {
+  llvm::json::Object response;
+  FillResponse(request, response);
+
+  response.try_emplace("body", llvm::json::Object{{"breakpoints", llvm::json::Array()}});
+  g_vsc.SendJSON(llvm::json::Value(std::move(response)));
+}
+
 // A request used in testing to get the details on all breakpoints that are
 // currently set in the target. This helps us to test "setBreakpoints" and
 // "setFunctionBreakpoints" requests to verify we have the correct set of
@@ -3289,6 +3630,9 @@ void RegisterRequestCallbacks() {
   g_vsc.RegisterRequestCallback("stepOut", request_stepOut);
   g_vsc.RegisterRequestCallback("threads", request_threads);
   g_vsc.RegisterRequestCallback("variables", request_variables);
+  g_vsc.RegisterRequestCallback("disassemble", request_disassemble);
+  g_vsc.RegisterRequestCallback("setInstructionBreakpoints", request_setInstructionBreakpoints);
+  g_vsc.RegisterRequestCallback("setDataBreakpoints", request_setDataBreakpoints);
   // Custom requests
   g_vsc.RegisterRequestCallback("compileUnits", request_compileUnits);
   g_vsc.RegisterRequestCallback("modules", request_modules);

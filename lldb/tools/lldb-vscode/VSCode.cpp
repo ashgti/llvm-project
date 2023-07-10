@@ -45,7 +45,7 @@ VSCode::VSCode()
       progress_event_reporter(
           [&](const ProgressEvent &event) { SendJSON(event.ToJSON()); }),
       reverse_request_seq(0), repl_mode(ReplMode::Auto), auto_repl_mode_collision_warning(false) {
-  const char *log_file_path = getenv("LLDBVSCODE_LOG");
+  const char *log_file_path = "/tmp/lldb-vscode.log"; // getenv("LLDBVSCODE_LOG");
 #if defined(_WIN32)
   // Windows opens stdout and stdin in text mode which converts \n to 13,10
   // while the value is just 10 on Darwin/Linux. Setting the file mode to binary
@@ -57,7 +57,7 @@ VSCode::VSCode()
   assert(result);
 #endif
   if (log_file_path)
-    log.reset(new std::ofstream(log_file_path));
+    log.reset(new std::ofstream(log_file_path, std::ios::out | std::ios::trunc));
 }
 
 VSCode::~VSCode() = default;
@@ -541,7 +541,7 @@ bool VSCode::HandleObject(const llvm::json::Object &object) {
       return true; // Success
     } else {
       if (log)
-        *log << "error: unhandled command \"" << command.data() << std::endl;
+        *log << "error: unhandled command \"" << command.data() << "\"" << std::endl;
       return false; // Fail
     }
   }
