@@ -59,7 +59,12 @@ class TestVSCode_variables(lldbvscode_testcase.VSCodeTestCaseBase):
         self.assertEvaluate("struct1.foo", "15")
         self.assertEvaluate("struct2->foo", "16")
 
-        self.assertEvaluateFailure("var")  # local variable of a_function
+        if self.context != "repl":
+            self.assertEvaluateFailure("var")  # local variable of a_function
+        else:
+            # In repl context, the following is executed as the lldb var command.
+            self.assertEvaluate("var", "argc = \d")
+        
         self.assertEvaluateFailure("my_struct")  # type name
         self.assertEvaluateFailure("int")  # type name
         self.assertEvaluateFailure("foo")  # member of my_struct

@@ -28,6 +28,10 @@ class TestVSCode_startDebugging(lldbvscode_testcase.VSCodeTestCaseBase):
             '`lldb-vscode startDebugging attach \'{"pid":321}\'', context='repl'
         )
 
+        # Run an additional command to ensure the request and response were
+        # triggered.
+        self.stepOver()
+
         self.assertEqual(
             len(self.vscode.reverse_requests), 
             1, 
