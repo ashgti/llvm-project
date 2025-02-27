@@ -7,6 +7,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "DAP.h"
+#include "DAPLog.h"
 #include "EventHelper.h"
 #include "Handler/RequestHandler.h"
 #include "RunInTerminal.h"
@@ -402,6 +403,21 @@ serveConnection(const Socket::SocketProtocol &protocol, const std::string &name,
   return llvm::Error::success();
 }
 
+class DAPLogHandler : public lldb_private::LogHandler {
+public:
+  DAPLogHandler(std::shared_ptr<std::ofstream> stream) : m_stream(stream) {}
+
+  void Emit(llvm::StringRef message) override {
+    std::lock_guard<std::mutex> guard(m_mutex);
+    (*m_stream) << message.str();
+    m_stream->flush();
+  }
+
+private:
+  std::mutex m_mutex;
+  std::shared_ptr<std::ofstream> m_stream;
+};
+
 int main(int argc, char *argv[]) {
   llvm::InitLLVM IL(argc, argv, /*InstallPipeSignalExitHandler=*/false);
 #if !defined(__APPLE__)
@@ -490,10 +506,21 @@ int main(int argc, char *argv[]) {
   }
 #endif
 
-  std::unique_ptr<std::ofstream> log = nullptr;
+  InitializeDAPChannel();
+
+  // TODO(harjohn): Migrate 'log' to LLDB_LOG helpers.
+  std::shared_ptr<std::ofstream> log = nullptr;
   const char *log_file_path = getenv("LLDBDAP_LOG");
-  if (log_file_path)
-    log = std::make_unique<std::ofstream>(log_file_path);
+  if (log_file_path) {
+    log = std::make_shared<std::ofstream>(log_file_path);
+
+    if (!lldb_private::Log::EnableLogChannel(
+            std::make_shared<DAPLogHandler>(log),
+            LLDB_LOG_OPTION_PREPEND_TIMESTAMP, "lldb-dap", {"all"},
+            llvm::errs())) {
+      return EXIT_FAILURE;
+    }
+  }
 
   // Initialize LLDB first before we do anything.
   lldb::SBError error = lldb::SBDebugger::InitializeWithErrorHandling();
