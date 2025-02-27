@@ -150,6 +150,9 @@ static void RegisterRequestCallbacks(DAP &dap) {
 
   // Testing requests
   dap.RegisterRequest<TestGetTargetBreakpointsRequestHandler>();
+
+  // Event handlers
+  dap.onExited = dap.RegisterEvent<protocol::ExitedEventBody>("exited");
 }
 
 static void PrintHelp(LLDBDAPOptTable &table, llvm::StringRef tool_name) {

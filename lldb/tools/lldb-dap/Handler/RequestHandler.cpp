@@ -10,6 +10,7 @@
 #include "DAP.h"
 #include "JSONUtils.h"
 #include "LLDBUtils.h"
+#include "ResponseHandler.h"
 #include "RunInTerminal.h"
 
 #if !defined(_WIN32)
@@ -33,7 +34,7 @@ MakeArgv(const llvm::ArrayRef<std::string> &strs) {
 
 // Both attach and launch take a either a sourcePath or sourceMap
 // argument (or neither), from which we need to set the target.source-map.
-void RequestHandler::SetSourceMapFromArguments(
+void BaseRequestHandler::SetSourceMapFromArguments(
     const llvm::json::Object &arguments) const {
   const char *sourceMapHelp =
       "source must be be an array of two-element arrays, "
@@ -147,7 +148,7 @@ static llvm::Error RunInTerminal(DAP &dap,
 }
 
 lldb::SBError
-RequestHandler::LaunchProcess(const llvm::json::Object &request) const {
+BaseRequestHandler::LaunchProcess(const llvm::json::Object &request) const {
   lldb::SBError error;
   const auto *arguments = request.getObject("arguments");
   auto launchCommands = GetStrings(arguments, "launchCommands");
@@ -213,13 +214,13 @@ RequestHandler::LaunchProcess(const llvm::json::Object &request) const {
   return error;
 }
 
-void RequestHandler::PrintWelcomeMessage() const {
+void BaseRequestHandler::PrintWelcomeMessage() const {
 #ifdef LLDB_DAP_WELCOME_MESSAGE
   dap.SendOutput(OutputType::Console, LLDB_DAP_WELCOME_MESSAGE);
 #endif
 }
 
-bool RequestHandler::HasInstructionGranularity(
+bool BaseRequestHandler::HasInstructionGranularity(
     const llvm::json::Object &arguments) const {
   if (std::optional<llvm::StringRef> value = arguments.getString("granularity"))
     return value == "instruction";

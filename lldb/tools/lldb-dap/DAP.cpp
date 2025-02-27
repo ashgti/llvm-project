@@ -8,6 +8,7 @@
 
 #include "DAP.h"
 #include "DAPLog.h"
+#include "Handler/RequestHandler.h"
 #include "Handler/ResponseHandler.h"
 #include "JSONUtils.h"
 #include "LLDBUtils.h"
@@ -254,6 +255,11 @@ void DAP::SendJSON(const llvm::json::Value &json) {
       *log << "encoding failure: " << error << "\n";
     }
   }
+
+  Send(M);
+}
+
+void DAP::Send(const protocol::ProtocolMessage &M) {
   auto status = transport.Write(M);
   if (status.Fail() && log)
     *log << "transport failure: " << status.AsCString() << "\n";
@@ -686,30 +692,23 @@ llvm::Expected<protocol::ProtocolMessage> DAP::GetNextObject() {
 }
 
 bool DAP::HandleObject(const protocol::ProtocolMessage &M) {
-  llvm::json::Value v = toJSON(M);
-  llvm::json::Object object = *v.getAsObject();
-  const auto packet_type = GetString(object, "type");
-  if (packet_type == "request") {
-    const auto command = GetString(object, "command");
-
-    auto new_handler_pos = request_handlers.find(command);
+  if (const auto *req = std::get_if<protocol::Request>(&M)) {
+    auto new_handler_pos = request_handlers.find(req->command);
     if (new_handler_pos != request_handlers.end()) {
-      (*new_handler_pos->second)(object);
+      (*new_handler_pos->second)(*req);
       return true; // Success
     }
 
-    LLDB_LOG(GetLog(DAPLog::Protocol), "Unhandled command {0}", command);
+    LLDB_LOG(GetLog(DAPLog::Protocol), "Unhandled command {0}", req->command);
 
     return false; // Fail
   }
 
-  if (packet_type == "response") {
-    auto id = GetSigned(object, "request_seq", 0);
-
+  if (const auto *resp = std::get_if<protocol::Response>(&M)) {
     std::unique_ptr<ResponseHandler> response_handler;
     {
       std::lock_guard<std::mutex> locker(call_mutex);
-      auto inflight = inflight_reverse_requests.find(id);
+      auto inflight = inflight_reverse_requests.find(resp->request_seq);
       if (inflight != inflight_reverse_requests.end()) {
         response_handler = std::move(inflight->second);
         inflight_reverse_requests.erase(inflight);
@@ -717,22 +716,16 @@ bool DAP::HandleObject(const protocol::ProtocolMessage &M) {
     }
 
     if (!response_handler)
-      response_handler = std::make_unique<UnknownResponseHandler>("", id);
+      response_handler =
+          std::make_unique<UnknownResponseHandler>("", resp->request_seq);
 
     // Result should be given, use null if not.
-    if (GetBoolean(object, "success", false)) {
-      llvm::json::Value Result = nullptr;
-      if (auto *B = object.get("body")) {
-        Result = std::move(*B);
-      }
-      (*response_handler)(Result);
+    if (resp->success) {
+      (*response_handler)(resp->rawBody);
     } else {
-      llvm::StringRef message = GetString(object, "message");
-      if (message.empty()) {
-        message = "Unknown error, response failed";
-      }
       (*response_handler)(llvm::createStringError(
-          std::error_code(-1, std::generic_category()), message));
+          std::error_code(-1, std::generic_category()),
+          resp->message.value_or("Unknown error, response failed")));
     }
 
     return true;

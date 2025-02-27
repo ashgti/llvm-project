@@ -12,8 +12,6 @@
 #include "DAPForward.h"
 #include "ExceptionBreakpoint.h"
 #include "FunctionBreakpoint.h"
-#include "Handler/RequestHandler.h"
-#include "Handler/ResponseHandler.h"
 #include "InstructionBreakpoint.h"
 #include "OutputRedirector.h"
 #include "ProgressEvent.h"
@@ -41,7 +39,6 @@
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/Threading.h"
 #include <fstream>
-#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -62,6 +59,9 @@ typedef llvm::StringMap<FunctionBreakpoint> FunctionBreakpointMap;
 typedef llvm::DenseMap<lldb::addr_t, InstructionBreakpoint>
     InstructionBreakpointMap;
 
+/// A debug adapter initiated event.
+template <typename T> using OutgoingEvent = std::function<void(const T &)>;
+
 enum class OutputType { Console, Stdout, Stderr, Telemetry };
 
 /// Buffer size for handling output events.
@@ -70,13 +70,6 @@ constexpr uint64_t OutputBufferSize = (1u << 12);
 enum DAPBroadcasterBits {
   eBroadcastBitStopEventThread = 1u << 0,
   eBroadcastBitStopProgressThread = 1u << 1
-};
-
-enum class PacketStatus {
-  Success = 0,
-  EndOfFile,
-  JSONMalformed,
-  JSONNotObject
 };
 
 enum class ReplMode { Variable = 0, Command, Auto };
@@ -127,21 +120,21 @@ struct Variables {
 
 struct StartDebuggingRequestHandler : public lldb::SBCommandPluginInterface {
   DAP &dap;
-  explicit StartDebuggingRequestHandler(DAP &d) : dap(d) {};
+  explicit StartDebuggingRequestHandler(DAP &d) : dap(d){};
   bool DoExecute(lldb::SBDebugger debugger, char **command,
                  lldb::SBCommandReturnObject &result) override;
 };
 
 struct ReplModeRequestHandler : public lldb::SBCommandPluginInterface {
   DAP &dap;
-  explicit ReplModeRequestHandler(DAP &d) : dap(d) {};
+  explicit ReplModeRequestHandler(DAP &d) : dap(d){};
   bool DoExecute(lldb::SBDebugger debugger, char **command,
                  lldb::SBCommandReturnObject &result) override;
 };
 
 struct SendEventRequestHandler : public lldb::SBCommandPluginInterface {
   DAP &dap;
-  explicit SendEventRequestHandler(DAP &d) : dap(d) {};
+  explicit SendEventRequestHandler(DAP &d) : dap(d){};
   bool DoExecute(lldb::SBDebugger debugger, char **command,
                  lldb::SBCommandReturnObject &result) override;
 };
@@ -190,7 +183,7 @@ struct DAP {
   // the old process here so we can detect this case and keep running.
   lldb::pid_t restarting_process_id;
   bool configuration_done_sent;
-  llvm::StringMap<std::unique_ptr<RequestHandler>> request_handlers;
+  llvm::StringMap<std::unique_ptr<BaseRequestHandler>> request_handlers;
   bool waiting_for_run_in_terminal;
   ProgressEventReporter progress_event_reporter;
   // Keep track of the last stop thread index IDs as threads won't go away
@@ -211,6 +204,14 @@ struct DAP {
   // will contain that expression.
   std::string last_nonempty_var_expression;
 
+  /// Typed Events Handlers
+  /// @{
+
+  /// onExited sends an event that the debuggee has exited.
+  OutgoingEvent<protocol::ExitedEventBody> onExited;
+
+  /// @}
+
   DAP(llvm::StringRef name, llvm::StringRef path, std::ofstream *log,
       lldb::IOObjectSP input, lldb::IOObjectSP output, ReplMode repl_mode,
       std::vector<std::string> pre_init_commands);
@@ -230,6 +231,7 @@ struct DAP {
   /// Stop event handler threads.
   void StopEventHandlers();
 
+  // FIXME: Use the typed handlers instead of raw json values.
   // Serialize the JSON value into a string and send the JSON packet to
   // the "out" stream.
   void SendJSON(const llvm::json::Value &json);
@@ -350,6 +352,10 @@ struct DAP {
     request_handlers[Handler::getCommand()] = std::make_unique<Handler>(*this);
   }
 
+  /// Registeres an event handler for sending Debug Adapter Protocol events.
+  template <typename Body>
+  OutgoingEvent<Body> RegisterEvent(llvm::StringLiteral Event);
+
   /// Debuggee will continue from stopped state.
   void WillContinue() { variables.Clear(); }
 
@@ -383,11 +389,19 @@ struct DAP {
   InstructionBreakpoint *GetInstructionBPFromStopReason(lldb::SBThread &thread);
 
 private:
-  // Send the JSON in "json_str" to the "out" stream. Correctly send the
-  // "Content-Length:" field followed by the length, followed by the raw
-  // JSON bytes.
-  void SendJSON(const std::string &json_str);
+  /// Sends a protocol message to the client.
+  void Send(const protocol::ProtocolMessage &);
 };
+
+template <typename Body>
+OutgoingEvent<Body> DAP::RegisterEvent(llvm::StringLiteral Event) {
+  return [&, Event](const Body &B) {
+    protocol::Event Evt;
+    Evt.event = Event;
+    Evt.rawBody = std::move(B);
+    Send(Evt);
+  };
+}
 
 } // namespace lldb_dap
 
