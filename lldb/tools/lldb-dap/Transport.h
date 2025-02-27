@@ -36,8 +36,7 @@ public:
 
   /// Reads the next Debug Adater Protocol message from the input stream.
   llvm::Expected<protocol::ProtocolMessage> Read();
-
-private:
+  
   llvm::StringRef m_client_name;
   lldb::IOObjectSP m_input;
   lldb::IOObjectSP m_output;

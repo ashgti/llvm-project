@@ -351,6 +351,16 @@ public:
   void operator()(const llvm::json::Object &request) const override;
 };
 
+class CancelRequestHandler
+    : public RequestHandler<protocol::CancelArguments,
+                            protocol::CancelResponseBody> {
+public:
+  using RequestHandler::RequestHandler;
+  static llvm::StringLiteral getCommand() { return "cancel"; }
+  llvm::Expected<protocol::CancelResponseBody>
+  Execute(const protocol::CancelArguments &args) const override;
+};
+
 /// A request used in testing to get the details on all breakpoints that are
 /// currently set in the target. This helps us to test "setBreakpoints" and
 /// "setFunctionBreakpoints" requests to verify we have the correct set of

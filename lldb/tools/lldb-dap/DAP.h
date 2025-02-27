@@ -38,6 +38,7 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/Threading.h"
+#include <cstdint>
 #include <fstream>
 #include <memory>
 #include <mutex>
@@ -308,7 +309,6 @@ struct DAP {
   /// listeing for its breakpoint events.
   void SetTarget(const lldb::SBTarget target);
 
-  llvm::Expected<protocol::ProtocolMessage> GetNextObject();
   bool HandleObject(const protocol::ProtocolMessage &);
 
   /// Disconnect the DAP session.
@@ -391,15 +391,18 @@ struct DAP {
 private:
   /// Sends a protocol message to the client.
   void Send(const protocol::ProtocolMessage &);
+
+  std::atomic<int64_t> active_seq;
 };
 
 template <typename Body>
 OutgoingEvent<Body> DAP::RegisterEvent(llvm::StringLiteral Event) {
   return [&, Event](const Body &B) {
-    protocol::Event Evt;
-    Evt.event = Event;
-    Evt.rawBody = std::move(B);
-    Send(Evt);
+    Send(protocol::Event{
+        /*event=*/std::string(Event),
+        /*rawBody=*/std::move(B),
+        /*statistics=*/std::nullopt,
+    });
   };
 }
 

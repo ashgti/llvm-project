@@ -20,6 +20,7 @@
 using namespace llvm;
 using namespace lldb;
 using namespace lldb_private;
+using namespace lldb_dap;
 using namespace lldb_dap::protocol;
 
 static Expected<std::string> ReadBytes(IOObjectSP &IO, size_t length) {
