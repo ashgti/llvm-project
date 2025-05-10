@@ -14,11 +14,11 @@ import lldbdap_testcase
 
 class TestDAP_server(lldbdap_testcase.DAPTestCaseBase):
     def start_server(self, connection):
-        log_file_path = self.getBuildArtifact("dap.txt")
+        self.log_file_path = self.getBuildArtifact("dap.txt")
         (process, connection) = dap_server.DebugAdapterServer.launch(
             executable=self.lldbDAPExec,
             connection=connection,
-            log_file=log_file_path,
+            log_file=self.log_file_path,
         )
 
         def cleanup():
@@ -27,6 +27,12 @@ class TestDAP_server(lldbdap_testcase.DAPTestCaseBase):
         self.addTearDownHook(cleanup)
 
         return (process, connection)
+
+    def dump_logs(self):
+        print("========= DEBUG ADAPTER PROTOCOL SERVER LOGS =========")
+        with open(self.log_file_path) as f:
+            print(f.read())
+        print("========= END =========")
 
     def run_debug_session(self, connection, name):
         self.dap_server = dap_server.DebugAdapterServer(
@@ -40,6 +46,7 @@ class TestDAP_server(lldbdap_testcase.DAPTestCaseBase):
             program,
             args=[name],
             disconnectAutomatically=False,
+            stopOnEntry=True,
         )
         self.set_source_breakpoints(source, [breakpoint_line])
         self.continue_to_next_stop()
@@ -94,6 +101,7 @@ class TestDAP_server(lldbdap_testcase.DAPTestCaseBase):
             program,
             args=["Alice"],
             disconnectAutomatically=False,
+            stopOnEntry=True,
         )
         self.set_source_breakpoints(source, [breakpoint_line])
         self.continue_to_next_stop()

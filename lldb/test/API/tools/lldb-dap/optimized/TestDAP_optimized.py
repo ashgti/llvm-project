@@ -14,7 +14,7 @@ class TestDAP_optimized(lldbdap_testcase.DAPTestCaseBase):
     def test_stack_frame_name(self):
         """Test optimized frame has special name suffix."""
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
         source = "main.cpp"
         breakpoint_line = line_number(source, "// breakpoint 1")
         lines = [breakpoint_line]
@@ -33,7 +33,7 @@ class TestDAP_optimized(lldbdap_testcase.DAPTestCaseBase):
     def test_optimized_variable(self):
         """Test optimized variable value contains error."""
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
         source = "main.cpp"
         breakpoint_line = line_number(source, "// breakpoint 2")
         lines = [breakpoint_line]

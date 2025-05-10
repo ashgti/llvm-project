@@ -81,9 +81,6 @@ class TestDAP_breakpointEvents(lldbdap_testcase.DAPTestCaseBase):
                 breakpoint["verified"], "expect foo breakpoint to not be verified"
             )
 
-        # Make sure we're stopped.
-        self.dap_server.wait_for_stopped()
-
         # Flush the breakpoint events.
         self.dap_server.wait_for_breakpoint_events(timeout=5)
 

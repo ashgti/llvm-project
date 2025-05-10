@@ -285,23 +285,33 @@ class DAPTestCaseBase(TestBase):
             return self.dap_server.wait_for_stopped()
         return None
 
+    def process_continue(self, expectFailure=False):
+        response = self.dap_server.request_continue()
+        if expectFailure:
+            return response
+
+        self.assertTrue(
+            response["success"],
+            "continue failed (%s)" % (response,),
+        )
+
     def continue_to_next_stop(self):
-        self.dap_server.request_continue()
+        self.process_continue()
         return self.dap_server.wait_for_stopped()
 
     def continue_to_breakpoints(self, breakpoint_ids):
-        self.dap_server.request_continue()
+        self.process_continue()
         self.verify_breakpoint_hit(breakpoint_ids)
 
     def continue_to_exception_breakpoint(self, filter_label):
-        self.dap_server.request_continue()
+        self.process_continue()
         self.assertTrue(
             self.verify_stop_exception_info(filter_label),
             'verify we got "%s"' % (filter_label),
         )
 
     def continue_to_exit(self, exitCode=0):
-        self.dap_server.request_continue()
+        self.process_continue()
         stopped_events = self.dap_server.wait_for_stopped()
         self.assertEqual(
             len(stopped_events), 1, "stopped_events = {}".format(stopped_events)
@@ -330,27 +340,14 @@ class DAPTestCaseBase(TestBase):
 
     def attach(
         self,
-        program=None,
-        pid=None,
-        waitFor=None,
-        trace=None,
-        initCommands=None,
-        preRunCommands=None,
-        stopCommands=None,
-        exitCommands=None,
-        attachCommands=None,
-        coreFile=None,
+        /,
         stopOnAttach=True,
         disconnectAutomatically=True,
-        terminateCommands=None,
-        postRunCommands=None,
-        sourceMap=None,
         sourceInitFile=False,
         expectFailure=False,
-        gdbRemotePort=None,
-        gdbRemoteHostname=None,
         sourceBreakpoints=None,
         functionBreakpoints=None,
+        **kwargs,
     ):
         """Build the default Makefile target, create the DAP debug adapter,
         and attach to the process.
@@ -390,22 +387,8 @@ class DAPTestCaseBase(TestBase):
 
         self.dap_server.request_configurationDone()
         response = self.dap_server.request_attach(
-            program=program,
-            pid=pid,
-            waitFor=waitFor,
-            trace=trace,
-            initCommands=initCommands,
-            preRunCommands=preRunCommands,
-            stopCommands=stopCommands,
-            exitCommands=exitCommands,
-            attachCommands=attachCommands,
-            terminateCommands=terminateCommands,
-            coreFile=coreFile,
             stopOnAttach=stopOnAttach,
-            postRunCommands=postRunCommands,
-            sourceMap=sourceMap,
-            gdbRemotePort=gdbRemotePort,
-            gdbRemoteHostname=gdbRemoteHostname,
+            **kwargs,
         )
         if expectFailure:
             return response
@@ -417,36 +400,13 @@ class DAPTestCaseBase(TestBase):
     def launch(
         self,
         program=None,
-        args=None,
-        cwd=None,
-        env=None,
-        stopOnEntry=False,
-        disableASLR=False,
-        disableSTDIO=False,
-        shellExpandArguments=False,
-        trace=False,
-        initCommands=None,
-        preRunCommands=None,
-        stopCommands=None,
-        exitCommands=None,
-        terminateCommands=None,
-        sourcePath=None,
-        debuggerRoot=None,
-        sourceInitFile=False,
-        launchCommands=None,
-        sourceMap=None,
-        disconnectAutomatically=True,
-        runInTerminal=False,
+        /,
         expectFailure=False,
-        postRunCommands=None,
-        enableAutoVariableSummaries=False,
-        displayExtendedBacktrace=False,
-        enableSyntheticChildDebugging=False,
-        commandEscapePrefix=None,
-        customFrameFormat=None,
-        customThreadFormat=None,
+        sourceInitFile=False,
+        disconnectAutomatically=True,
         sourceBreakpoints=None,
         functionBreakpoints=None,
+        **kwargs,
     ):
         """Sending launch request to dap"""
 
@@ -485,34 +445,7 @@ class DAPTestCaseBase(TestBase):
 
         self.dap_server.request_configurationDone()
 
-        response = self.dap_server.request_launch(
-            program,
-            args=args,
-            cwd=cwd,
-            env=env,
-            stopOnEntry=stopOnEntry,
-            disableASLR=disableASLR,
-            disableSTDIO=disableSTDIO,
-            shellExpandArguments=shellExpandArguments,
-            trace=trace,
-            initCommands=initCommands,
-            preRunCommands=preRunCommands,
-            stopCommands=stopCommands,
-            exitCommands=exitCommands,
-            terminateCommands=terminateCommands,
-            sourcePath=sourcePath,
-            debuggerRoot=debuggerRoot,
-            launchCommands=launchCommands,
-            sourceMap=sourceMap,
-            runInTerminal=runInTerminal,
-            postRunCommands=postRunCommands,
-            enableAutoVariableSummaries=enableAutoVariableSummaries,
-            displayExtendedBacktrace=displayExtendedBacktrace,
-            enableSyntheticChildDebugging=enableSyntheticChildDebugging,
-            commandEscapePrefix=commandEscapePrefix,
-            customFrameFormat=customFrameFormat,
-            customThreadFormat=customThreadFormat,
-        )
+        response = self.dap_server.request_launch(program, **kwargs)
 
         if expectFailure:
             return response
@@ -527,75 +460,16 @@ class DAPTestCaseBase(TestBase):
     def build_and_launch(
         self,
         program,
-        args=None,
-        cwd=None,
-        env=None,
-        stopOnEntry=False,
-        disableASLR=False,
-        disableSTDIO=False,
-        shellExpandArguments=False,
-        trace=False,
-        initCommands=None,
-        preRunCommands=None,
-        stopCommands=None,
-        exitCommands=None,
-        terminateCommands=None,
-        sourcePath=None,
-        debuggerRoot=None,
-        sourceInitFile=False,
-        runInTerminal=False,
-        disconnectAutomatically=True,
-        postRunCommands=None,
+        /,
         lldbDAPEnv=None,
-        enableAutoVariableSummaries=False,
-        displayExtendedBacktrace=False,
-        enableSyntheticChildDebugging=False,
-        commandEscapePrefix=None,
-        customFrameFormat=None,
-        customThreadFormat=None,
-        launchCommands=None,
-        expectFailure=False,
-        sourceBreakpoints=None,
-        functionBreakpoints=None,
+        **kwargs,
     ):
         """Build the default Makefile target, create the DAP debug adapter,
         and launch the process.
         """
         self.build_and_create_debug_adapter(lldbDAPEnv)
         self.assertTrue(os.path.exists(program), "executable must exist")
-
-        return self.launch(
-            program,
-            args,
-            cwd,
-            env,
-            stopOnEntry,
-            disableASLR,
-            disableSTDIO,
-            shellExpandArguments,
-            trace,
-            initCommands,
-            preRunCommands,
-            stopCommands,
-            exitCommands,
-            terminateCommands,
-            sourcePath,
-            debuggerRoot,
-            sourceInitFile,
-            runInTerminal=runInTerminal,
-            disconnectAutomatically=disconnectAutomatically,
-            postRunCommands=postRunCommands,
-            enableAutoVariableSummaries=enableAutoVariableSummaries,
-            enableSyntheticChildDebugging=enableSyntheticChildDebugging,
-            displayExtendedBacktrace=displayExtendedBacktrace,
-            commandEscapePrefix=commandEscapePrefix,
-            customFrameFormat=customFrameFormat,
-            customThreadFormat=customThreadFormat,
-            launchCommands=launchCommands,
-            expectFailure=expectFailure,
-            sourceBreakpoints=sourceBreakpoints,
-            functionBreakpoints=functionBreakpoints,
-        )
+        return self.launch(program, **kwargs)
 
     def getBuiltinDebugServerTool(self):
         # Tries to find simulation/lldb-server/gdbserver tool path.
@@ -611,3 +485,18 @@ class DAPTestCaseBase(TestBase):
                 self.dap_server.request_disconnect(terminateDebuggee=True)
                 self.assertIsNotNone(server_tool, "debugserver not found.")
         return server_tool
+
+    def dump_logs(self):
+        # The dap_server may have never been setup or was removed by the test.
+        if hasattr(self, "dap_server"):
+            self.dap_server.dump_logs()
+
+    # =========================================================
+    # Various callbacks to allow introspection of test progress
+    # =========================================================
+
+    def markFailure(self):
+        self.addTearDownHook(self.dump_logs)
+
+    def markError(self):
+        self.addTearDownHook(self.dump_logs)

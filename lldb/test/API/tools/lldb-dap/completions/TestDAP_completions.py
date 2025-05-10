@@ -43,12 +43,12 @@ class TestDAP_completions(lldbdap_testcase.DAPTestCaseBase):
         for not_expected_item in not_expected_list:
             self.assertNotIn(not_expected_item, actual_list)
 
-    def setup_debugee(self, stopOnEntry=False):
+    def setup_debugee(self):
         program = self.getBuildArtifact("a.out")
         source = "main.cpp"
         self.build_and_launch(
             program,
-            stopOnEntry=stopOnEntry,
+            stopOnEntry=True,
             sourceBreakpoints=[
                 (
                     source,
@@ -65,7 +65,6 @@ class TestDAP_completions(lldbdap_testcase.DAPTestCaseBase):
         Tests completion requests for lldb commands, within "repl-mode=command"
         """
         self.setup_debugee()
-        self.continue_to_next_stop()
 
         res = self.dap_server.request_evaluate(
             "`lldb-dap repl-mode command", context="repl"
@@ -241,7 +240,7 @@ class TestDAP_completions(lldbdap_testcase.DAPTestCaseBase):
         """
         Tests completion requests in "repl-mode=auto"
         """
-        self.setup_debugee(stopOnEntry=True)
+        self.setup_debugee()
 
         res = self.dap_server.request_evaluate(
             "`lldb-dap repl-mode auto", context="repl"

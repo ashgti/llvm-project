@@ -207,7 +207,9 @@ class TestDAP_stackTrace(lldbdap_testcase.DAPTestCaseBase):
         Test that the stack frame without a function name is given its pc in the response.
         """
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program, customFrameFormat="${function.name-with-args}")
+        self.build_and_launch(
+            program, customFrameFormat="${function.name-with-args}", stopOnEntry=True
+        )
         source = "main.c"
 
         self.set_source_breakpoints(source, [line_number(source, "recurse end")])
@@ -222,7 +224,7 @@ class TestDAP_stackTrace(lldbdap_testcase.DAPTestCaseBase):
         Test the StackFrameFormat.
         """
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
         source = "main.c"
 
         self.set_source_breakpoints(source, [line_number(source, "recurse end")])

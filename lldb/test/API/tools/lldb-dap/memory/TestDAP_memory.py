@@ -18,7 +18,7 @@ class TestDAP_memory(lldbdap_testcase.DAPTestCaseBase):
         Tests memory references for evaluate
         """
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
         source = "main.cpp"
         self.source_path = os.path.join(os.getcwd(), source)
         self.set_source_breakpoints(
@@ -40,7 +40,7 @@ class TestDAP_memory(lldbdap_testcase.DAPTestCaseBase):
         Tests memory references for evaluate
         """
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
         source = "main.cpp"
         self.source_path = os.path.join(os.getcwd(), source)
         self.set_source_breakpoints(
@@ -60,7 +60,7 @@ class TestDAP_memory(lldbdap_testcase.DAPTestCaseBase):
         Tests memory references for `setVariable`
         """
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
         source = "main.cpp"
         self.source_path = os.path.join(os.getcwd(), source)
         self.set_source_breakpoints(
@@ -83,7 +83,7 @@ class TestDAP_memory(lldbdap_testcase.DAPTestCaseBase):
         Tests the 'readMemory' request
         """
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
         source = "main.cpp"
         self.source_path = os.path.join(os.getcwd(), source)
         self.set_source_breakpoints(

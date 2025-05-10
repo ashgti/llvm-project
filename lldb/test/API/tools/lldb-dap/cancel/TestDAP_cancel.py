@@ -45,7 +45,6 @@ class TestDAP_launch(lldbdap_testcase.DAPTestCaseBase):
         """
         program = self.getBuildArtifact("a.out")
         self.build_and_launch(program, stopOnEntry=True)
-        self.continue_to_next_stop()
 
         # Use a relatively short timeout since this is only to ensure the
         # following request is queued.
@@ -78,7 +77,6 @@ class TestDAP_launch(lldbdap_testcase.DAPTestCaseBase):
         """
         program = self.getBuildArtifact("a.out")
         self.build_and_launch(program, stopOnEntry=True)
-        self.continue_to_next_stop()
 
         blocking_seq = self.async_blocking_request(duration=self.timeoutval / 2)
         # Wait for the sleep to start to cancel the inflight request.

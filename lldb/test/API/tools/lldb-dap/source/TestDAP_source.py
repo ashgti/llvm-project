@@ -17,7 +17,7 @@ class TestDAP_source(lldbdap_testcase.DAPTestCaseBase):
         Tests the 'source' packet.
         """
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
         source = self.getSourcePath("main.c")
         breakpoint_line = line_number(source, "breakpoint")
 

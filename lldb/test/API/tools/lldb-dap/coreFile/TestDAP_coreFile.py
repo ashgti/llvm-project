@@ -19,7 +19,7 @@ class TestDAP_coreFile(lldbdap_testcase.DAPTestCaseBase):
         core_file = os.path.join(current_dir, "linux-x86_64.core")
 
         self.create_debug_adapter()
-        self.attach(exe_file, coreFile=core_file)
+        self.attach(program=exe_file, coreFile=core_file)
 
         expected_frames = [
             {
@@ -51,7 +51,8 @@ class TestDAP_coreFile(lldbdap_testcase.DAPTestCaseBase):
         self.assertEqual(self.get_stackFrames(), expected_frames)
 
         # Resuming should have no effect and keep the process stopped
-        self.continue_to_next_stop()
+        response = self.process_continue(expectFailure=True)
+        self.assertFalse(response["success"])
         self.assertEqual(self.get_stackFrames(), expected_frames)
 
         self.dap_server.request_next(threadId=32259)
@@ -67,7 +68,7 @@ class TestDAP_coreFile(lldbdap_testcase.DAPTestCaseBase):
         self.create_debug_adapter()
 
         source_map = [["/home/labath/test", current_dir]]
-        self.attach(exe_file, coreFile=core_file, sourceMap=source_map)
+        self.attach(program=exe_file, coreFile=core_file, sourceMap=source_map)
 
         self.assertIn(current_dir, self.get_stackFrames()[0]["source"]["path"])
 
@@ -81,6 +82,6 @@ class TestDAP_coreFile(lldbdap_testcase.DAPTestCaseBase):
         self.create_debug_adapter()
 
         source_map = {"/home/labath/test": current_dir}
-        self.attach(exe_file, coreFile=core_file, sourceMap=source_map)
+        self.attach(program=exe_file, coreFile=core_file, sourceMap=source_map)
 
         self.assertIn(current_dir, self.get_stackFrames()[0]["source"]["path"])

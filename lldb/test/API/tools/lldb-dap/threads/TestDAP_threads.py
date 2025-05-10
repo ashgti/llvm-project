@@ -18,7 +18,7 @@ class TestDAP_threads(lldbdap_testcase.DAPTestCaseBase):
         just hit the breakpoint, and not the first thread in the list.
         """
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
         source = "main.c"
         breakpoint_line = line_number(source, "// break here")
         lines = [breakpoint_line]
@@ -50,7 +50,9 @@ class TestDAP_threads(lldbdap_testcase.DAPTestCaseBase):
         """
         program = self.getBuildArtifact("a.out")
         self.build_and_launch(
-            program, customThreadFormat="This is thread index #${thread.index}"
+            program,
+            customThreadFormat="This is thread index #${thread.index}",
+            stopOnEntry=True,
         )
         source = "main.c"
         breakpoint_line = line_number(source, "// break here")

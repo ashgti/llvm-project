@@ -32,6 +32,7 @@ class TestDAP_extendedStackTrace(lldbdap_testcase.DAPTestCaseBase):
                 "DYLD_INSERT_LIBRARIES=" + backtrace_recording_lib,
             ],
             displayExtendedBacktrace=displayExtendedBacktrace,
+            stopOnEntry=True,
         )
         source = "main.m"
         breakpoint = line_number(source, "breakpoint 1")

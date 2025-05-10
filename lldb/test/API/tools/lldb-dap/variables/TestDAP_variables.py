@@ -116,7 +116,7 @@ class TestDAP_variables(lldbdap_testcase.DAPTestCaseBase):
         self.create_debug_adapter()
         self.assertTrue(os.path.exists(program), "executable must exist")
 
-        self.launch(program=program, initCommands=initCommands)
+        self.launch(program, initCommands=initCommands, stopOnEntry=True)
 
         functions = ["main"]
         breakpoint_ids = self.set_function_breakpoints(functions)
@@ -148,7 +148,9 @@ class TestDAP_variables(lldbdap_testcase.DAPTestCaseBase):
         """
         program = self.getBuildArtifact("a.out")
         self.build_and_launch(
-            program, enableAutoVariableSummaries=enableAutoVariableSummaries
+            program,
+            enableAutoVariableSummaries=enableAutoVariableSummaries,
+            stopOnEntry=True,
         )
         source = "main.cpp"
         breakpoint1_line = line_number(source, "// breakpoint 1")
@@ -431,7 +433,9 @@ class TestDAP_variables(lldbdap_testcase.DAPTestCaseBase):
         """
         program = self.getBuildArtifact("a.out")
         self.build_and_launch(
-            program, enableAutoVariableSummaries=enableAutoVariableSummaries
+            program,
+            enableAutoVariableSummaries=enableAutoVariableSummaries,
+            stopOnEntry=True,
         )
         source = "main.cpp"
         breakpoint1_line = line_number(source, "// breakpoint 1")
@@ -633,7 +637,9 @@ class TestDAP_variables(lldbdap_testcase.DAPTestCaseBase):
         """
         program = self.getBuildArtifact("a.out")
         self.build_and_launch(
-            program, enableSyntheticChildDebugging=enableSyntheticChildDebugging
+            program,
+            enableSyntheticChildDebugging=enableSyntheticChildDebugging,
+            stopOnEntry=True,
         )
         source = "main.cpp"
         breakpoint1_line = line_number(source, "// breakpoint 4")
@@ -682,7 +688,7 @@ class TestDAP_variables(lldbdap_testcase.DAPTestCaseBase):
         Test the stepping out of a function with return value show the variable correctly.
         """
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
 
         return_name = "(Return Value)"
         verify_locals = {
@@ -750,7 +756,7 @@ class TestDAP_variables(lldbdap_testcase.DAPTestCaseBase):
         a description that contains main.cpp.
         """
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
         source = "main.cpp"
         breakpoint1_line = line_number(source, "// breakpoint 1")
         lines = [breakpoint1_line]
@@ -817,7 +823,7 @@ class TestDAP_variables(lldbdap_testcase.DAPTestCaseBase):
         Test that toggle variables value format between decimal and hexical works.
         """
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
         source = "main.cpp"
         breakpoint1_line = line_number(source, "// breakpoint 1")
         lines = [breakpoint1_line]

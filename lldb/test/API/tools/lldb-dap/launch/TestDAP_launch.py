@@ -24,7 +24,7 @@ class TestDAP_launch(lldbdap_testcase.DAPTestCaseBase):
         environment, or anything else is specified.
         """
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
         self.continue_to_exit()
         # Now get the STDOUT and verify our program argument is correct
         output = self.get_stdout()
@@ -38,7 +38,7 @@ class TestDAP_launch(lldbdap_testcase.DAPTestCaseBase):
         """
         program = self.getBuildArtifact("a.out")
         self.create_debug_adapter()
-        response = self.launch(program, expectFailure=True)
+        response = self.launch(program, expectFailure=True, stopOnEntry=True)
         self.assertFalse(response["success"])
         self.assertEqual(
             "'{0}' does not exist".format(program), response["body"]["error"]["format"]
@@ -51,7 +51,11 @@ class TestDAP_launch(lldbdap_testcase.DAPTestCaseBase):
         program = self.getBuildArtifact("a.out")
         self.create_debug_adapter()
         response = self.launch(
-            program, launchCommands=["a b c"], runInTerminal=True, expectFailure=True
+            program,
+            launchCommands=["a b c"],
+            runInTerminal=True,
+            expectFailure=True,
+            stopOnEntry=True,
         )
         self.assertFalse(response["success"])
         self.assertTrue(self.get_dict_value(response, ["body", "error", "showUser"]))
@@ -89,16 +93,16 @@ class TestDAP_launch(lldbdap_testcase.DAPTestCaseBase):
         """
         program = self.getBuildArtifact("a.out")
         self.build_and_launch(program, stopOnEntry=True)
-
-        stopped_events = self.dap_server.wait_for_stopped()
-        for stopped_event in stopped_events:
-            if "body" in stopped_event:
-                body = stopped_event["body"]
-                if "reason" in body:
-                    reason = body["reason"]
-                    self.assertNotEqual(
-                        reason, "breakpoint", 'verify stop isn\'t "main" breakpoint'
-                    )
+        self.assertTrue(
+            len(self.dap_server.thread_stop_reasons) > 0,
+            "expected stopped event during launch",
+        )
+        for _, body in self.dap_server.thread_stop_reasons.items():
+            if "reason" in body:
+                reason = body["reason"]
+                self.assertNotEqual(
+                    reason, "breakpoint", 'verify stop isn\'t "main" breakpoint'
+                )
 
     @skipIfWindows
     def test_cwd(self):
@@ -108,7 +112,7 @@ class TestDAP_launch(lldbdap_testcase.DAPTestCaseBase):
         """
         program = self.getBuildArtifact("a.out")
         program_parent_dir = os.path.realpath(os.path.dirname(os.path.dirname(program)))
-        self.build_and_launch(program, cwd=program_parent_dir)
+        self.build_and_launch(program, cwd=program_parent_dir, stopOnEntry=True)
         self.continue_to_exit()
         # Now get the STDOUT and verify our program argument is correct
         output = self.get_stdout()
@@ -138,7 +142,10 @@ class TestDAP_launch(lldbdap_testcase.DAPTestCaseBase):
         commands = [f"platform shell echo cwd = {var}"]
 
         self.build_and_launch(
-            program, debuggerRoot=program_parent_dir, initCommands=commands
+            program,
+            debuggerRoot=program_parent_dir,
+            initCommands=commands,
+            stopOnEntry=True,
         )
         output = self.get_console()
         self.assertTrue(output and len(output) > 0, "expect console output")
@@ -163,7 +170,7 @@ class TestDAP_launch(lldbdap_testcase.DAPTestCaseBase):
         """
         program = self.getBuildArtifact("a.out")
         program_dir = os.path.dirname(program)
-        self.build_and_launch(program, sourcePath=program_dir)
+        self.build_and_launch(program, sourcePath=program_dir, stopOnEntry=True)
         output = self.get_console()
         self.assertTrue(output and len(output) > 0, "expect console output")
         lines = output.splitlines()
@@ -187,7 +194,7 @@ class TestDAP_launch(lldbdap_testcase.DAPTestCaseBase):
         Tests the default launch of a simple program with STDIO disabled.
         """
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program, disableSTDIO=True)
+        self.build_and_launch(program, disableSTDIO=True, stopOnEntry=True)
         self.continue_to_exit()
         # Now get the STDOUT and verify our program argument is correct
         output = self.get_stdout()
@@ -204,7 +211,9 @@ class TestDAP_launch(lldbdap_testcase.DAPTestCaseBase):
         program = self.getBuildArtifact("a.out")
         program_dir = os.path.dirname(program)
         glob = os.path.join(program_dir, "*.out")
-        self.build_and_launch(program, args=[glob], shellExpandArguments=True)
+        self.build_and_launch(
+            program, args=[glob], shellExpandArguments=True, stopOnEntry=True
+        )
         self.continue_to_exit()
         # Now get the STDOUT and verify our program argument is correct
         output = self.get_stdout()
@@ -226,7 +235,9 @@ class TestDAP_launch(lldbdap_testcase.DAPTestCaseBase):
         program = self.getBuildArtifact("a.out")
         program_dir = os.path.dirname(program)
         glob = os.path.join(program_dir, "*.out")
-        self.build_and_launch(program, args=[glob], shellExpandArguments=False)
+        self.build_and_launch(
+            program, args=[glob], shellExpandArguments=False, stopOnEntry=True
+        )
         self.continue_to_exit()
         # Now get the STDOUT and verify our program argument is correct
         output = self.get_stdout()
@@ -246,7 +257,7 @@ class TestDAP_launch(lldbdap_testcase.DAPTestCaseBase):
         """
         program = self.getBuildArtifact("a.out")
         args = ["one", "with space", "'with single quotes'", '"with double quotes"']
-        self.build_and_launch(program, args=args)
+        self.build_and_launch(program, args=args, stopOnEntry=True)
         self.continue_to_exit()
 
         # Now get the STDOUT and verify our arguments got passed correctly
@@ -277,7 +288,7 @@ class TestDAP_launch(lldbdap_testcase.DAPTestCaseBase):
             "SPACE": "Hello World",
         }
 
-        self.build_and_launch(program, env=env)
+        self.build_and_launch(program, env=env, stopOnEntry=True)
         self.continue_to_exit()
 
         # Now get the STDOUT and verify our arguments got passed correctly
@@ -307,7 +318,7 @@ class TestDAP_launch(lldbdap_testcase.DAPTestCaseBase):
         program = self.getBuildArtifact("a.out")
         env = ["NO_VALUE", "WITH_VALUE=BAR", "EMPTY_VALUE=", "SPACE=Hello World"]
 
-        self.build_and_launch(program, env=env)
+        self.build_and_launch(program, env=env, stopOnEntry=True)
         self.continue_to_exit()
 
         # Now get the STDOUT and verify our arguments got passed correctly
@@ -447,6 +458,7 @@ class TestDAP_launch(lldbdap_testcase.DAPTestCaseBase):
             stopCommands=stopCommands,
             exitCommands=exitCommands,
             launchCommands=launchCommands,
+            stopOnEntry=True,
         )
 
         # Get output from the console. This should contain both the
@@ -531,7 +543,7 @@ class TestDAP_launch(lldbdap_testcase.DAPTestCaseBase):
 
         terminateCommands = ["expr 4+2"]
         self.launch(
-            program=program,
+            program,
             stopOnEntry=True,
             terminateCommands=terminateCommands,
             disconnectAutomatically=False,
@@ -553,7 +565,7 @@ class TestDAP_launch(lldbdap_testcase.DAPTestCaseBase):
         as the one returned by "version" command.
         """
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
 
         source = "main.c"
         breakpoint_line = line_number(source, "// breakpoint 1")

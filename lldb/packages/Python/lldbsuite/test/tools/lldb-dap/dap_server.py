@@ -88,47 +88,25 @@ def packet_type_is(packet, packet_type):
     return "type" in packet and packet["type"] == packet_type
 
 
-def dump_dap_log(log_file):
-    print("========= DEBUG ADAPTER PROTOCOL LOGS =========", file=sys.stderr)
-    if log_file is None:
-        print("no log file available", file=sys.stderr)
-    else:
-        with open(log_file, "r") as file:
-            print(file.read(), file=sys.stderr)
-    print("========= END =========", file=sys.stderr)
-
-
-def read_packet_thread(vs_comm, log_file):
+def read_packet_thread(vs_comm):
     done = False
-    try:
-        while not done:
-            packet = read_packet(vs_comm.recv, trace_file=vs_comm.trace_file)
-            # `packet` will be `None` on EOF. We want to pass it down to
-            # handle_recv_packet anyway so the main thread can handle unexpected
-            # termination of lldb-dap and stop waiting for new packets.
-            done = not vs_comm.handle_recv_packet(packet)
-    finally:
-        # Wait for the process to fully exit before dumping the log file to
-        # ensure we have the entire log contents.
-        if vs_comm.process is not None:
-            try:
-                # Do not wait forever, some logs are better than none.
-                vs_comm.process.wait(timeout=20)
-            except subprocess.TimeoutExpired:
-                pass
-        dump_dap_log(log_file)
+    while not done:
+        packet = read_packet(vs_comm.recv, trace_file=vs_comm.trace_file)
+        # `packet` will be `None` on EOF. We want to pass it down to
+        # handle_recv_packet anyway so the main thread can handle unexpected
+        # termination of lldb-dap and stop waiting for new packets.
+        done = not vs_comm.handle_recv_packet(packet)
 
 
 class DebugCommunication(object):
     def __init__(self, recv, send, init_commands, log_file=None):
-        self.trace_file = None
+        self.trace_file = None  # Set to sys.stderr for additional logging.
         self.send = send
         self.recv = recv
         self.recv_packets = []
         self.recv_condition = threading.Condition()
-        self.recv_thread = threading.Thread(
-            target=read_packet_thread, args=(self, log_file)
-        )
+        self.recv_thread = threading.Thread(target=read_packet_thread, args=(self,))
+        self.log_file = log_file
         self.process_event_body = None
         self.exit_status = None
         self.initialize_body = None
@@ -156,6 +134,16 @@ class DebugCommunication(object):
             raise ValueError("command mismatch in response")
         if command["seq"] != response["request_seq"]:
             raise ValueError("seq mismatch in response")
+
+    def dump_logs(self, /, file=sys.stderr):
+        """Dump debug adapter protocol logs to the specified file."""
+        print("========= DEBUG ADAPTER PROTOCOL LOGS =========", file=file)
+        if self.log_file is None:
+            print("no log file available", file=file)
+        else:
+            with open(self.log_file, "r") as f:
+                print(f.read(), file=file)
+        print("========= END =========", file=file)
 
     def get_modules(self):
         module_list = self.request_modules()["body"]["modules"]
@@ -236,6 +224,12 @@ class DebugCommunication(object):
                 # When a new process is attached or launched, remember the
                 # details that are available in the body of the event
                 self.process_event_body = body
+            elif event == "continued":
+                all_threads_continued = body.get("allThreadsContinued", True)
+                tid = body["threadId"]
+                if tid in self.thread_stop_reasons:
+                    del self.thread_stop_reasons[tid]
+                self._process_continued(all_threads_continued)
             elif event == "stopped":
                 # Each thread that stops with a reason will send a
                 # 'stopped' event. We need to remember the thread stop
@@ -402,7 +396,7 @@ class DebugCommunication(object):
             # checking for more 'stopped' events and return all of them
             stopped_event = self.wait_for_event(filter="stopped", timeout=0.25)
         if exited:
-            self.threads = []
+            self.threads = None
         return stopped_events
 
     def wait_for_breakpoint_events(self, timeout=None):
@@ -456,12 +450,10 @@ class DebugCommunication(object):
         if threadId is None:
             threadId = self.get_thread_id()
         if threadId is None:
-            print("invalid threadId")
-            return None
+            raise DebugAdapterError("invalid threadId, process may not be stopped")
         response = self.request_stackTrace(threadId, startFrame=frameIndex, levels=1)
-        if response:
+        if response["success"]:
             return response["body"]["stackFrames"][0]
-        print("invalid response")
         return None
 
     def get_completions(self, text, frameId=None):
@@ -582,10 +574,10 @@ class DebugCommunication(object):
 
     def request_attach(
         self,
+        /,
         program=None,
         pid=None,
         waitFor=None,
-        trace=None,
         initCommands=None,
         preRunCommands=None,
         stopCommands=None,
@@ -606,8 +598,6 @@ class DebugCommunication(object):
             args_dict["program"] = program
         if waitFor is not None:
             args_dict["waitFor"] = waitFor
-        if trace:
-            args_dict["trace"] = trace
         args_dict["initCommands"] = self.init_commands
         if initCommands:
             args_dict["initCommands"].extend(initCommands)
@@ -638,6 +628,8 @@ class DebugCommunication(object):
 
         if response["success"]:
             self.wait_for_event("process")
+            if stopOnAttach:
+                self.wait_for_event("stopped")
         return response
 
     def request_breakpointLocations(
@@ -673,11 +665,17 @@ class DebugCommunication(object):
             self.configuration_done_sent = True
         return response
 
+    def _process_continued(self, all_threads_continued):
+        self.threads = None
+        self.frame_scopes = {}
+        if all_threads_continued:
+            self.thread_stop_reasons = {}
+
     def _process_stopped(self):
         self.threads = None
         self.frame_scopes = {}
 
-    def request_continue(self, threadId=None):
+    def request_continue(self, threadId=None, singleThread=False):
         if self.exit_status is not None:
             raise ValueError("request_continue called after process exited")
         # If we have launched or attached, then the first continue is done by
@@ -688,12 +686,15 @@ class DebugCommunication(object):
         if threadId is None:
             threadId = self.get_thread_id()
         args_dict["threadId"] = threadId
+        if singleThread:
+            args_dict["singleThread"] = True
         command_dict = {
             "command": "continue",
             "type": "request",
             "arguments": args_dict,
         }
         response = self.send_recv(command_dict)
+        self._process_continued(not singleThread)
         # Caller must still call wait_for_stopped.
         return response
 
@@ -809,6 +810,7 @@ class DebugCommunication(object):
     def request_launch(
         self,
         program,
+        /,
         args=None,
         cwd=None,
         env=None,
@@ -889,6 +891,8 @@ class DebugCommunication(object):
 
         if response["success"]:
             self.wait_for_event("process")
+            if stopOnEntry:
+                self.wait_for_event("stopped")
         return response
 
     def request_next(self, threadId, granularity="statement"):

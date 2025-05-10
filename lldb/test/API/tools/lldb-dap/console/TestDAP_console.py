@@ -151,7 +151,7 @@ class TestDAP_console(lldbdap_testcase.DAPTestCaseBase):
 
     def test_exit_status_message_ok(self):
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program, commandEscapePrefix="")
+        self.build_and_launch(program, commandEscapePrefix="", stopOnEntry=True)
         self.continue_to_exit()
 
         # Get the console output

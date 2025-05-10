@@ -16,6 +16,7 @@ class TestDAP_output(lldbdap_testcase.DAPTestCaseBase):
         program = self.getBuildArtifact("a.out")
         self.build_and_launch(
             program,
+            stopOnEntry=True,
             disconnectAutomatically=False,
             exitCommands=[
                 # Ensure that output produced by lldb itself is not consumed by the OutputRedirector.

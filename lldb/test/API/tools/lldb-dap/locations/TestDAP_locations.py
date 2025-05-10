@@ -18,7 +18,7 @@ class TestDAP_locations(lldbdap_testcase.DAPTestCaseBase):
         Tests the 'locations' request.
         """
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
         source = "main.cpp"
         self.source_path = os.path.join(os.getcwd(), source)
         self.set_source_breakpoints(

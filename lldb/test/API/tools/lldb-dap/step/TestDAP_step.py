@@ -17,7 +17,7 @@ class TestDAP_step(lldbdap_testcase.DAPTestCaseBase):
         Tests the stepping in/out/over in threads.
         """
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
         source = "main.cpp"
         # source_path = os.path.join(os.getcwd(), source)
         breakpoint1_line = line_number(source, "// breakpoint 1")

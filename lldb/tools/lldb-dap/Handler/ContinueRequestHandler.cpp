@@ -40,7 +40,7 @@ ContinueRequestHandler::Run(const ContinueArguments &args) const {
     return ToError(error);
 
   ContinueResponseBody body;
-  body.allThreadsContinued = args.singleThread;
+  body.allThreadsContinued = !args.singleThread;
   return body;
 }
 

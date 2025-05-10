@@ -16,7 +16,7 @@ class TestDAP_setDataBreakpoints(lldbdap_testcase.DAPTestCaseBase):
     def test_duplicate_start_addresses(self):
         """Test setDataBreakpoints with multiple watchpoints starting at the same addresses."""
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
         source = "main.cpp"
         first_loop_break_line = line_number(source, "// first loop breakpoint")
         self.set_source_breakpoints(source, [first_loop_break_line])
@@ -60,7 +60,7 @@ class TestDAP_setDataBreakpoints(lldbdap_testcase.DAPTestCaseBase):
     def test_expression(self):
         """Tests setting data breakpoints on expression."""
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
         source = "main.cpp"
         first_loop_break_line = line_number(source, "// first loop breakpoint")
         self.set_source_breakpoints(source, [first_loop_break_line])
@@ -100,7 +100,7 @@ class TestDAP_setDataBreakpoints(lldbdap_testcase.DAPTestCaseBase):
     def test_functionality(self):
         """Tests setting data breakpoints on variable."""
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
         source = "main.cpp"
         first_loop_break_line = line_number(source, "// first loop breakpoint")
         self.set_source_breakpoints(source, [first_loop_break_line])
