@@ -20,7 +20,7 @@ class TestDAP_stepInTargets(lldbdap_testcase.DAPTestCaseBase):
         Tests the basic stepping in targets with directly calls.
         """
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
         source = "main.cpp"
 
         breakpoint_line = line_number(source, "// set breakpoint here")

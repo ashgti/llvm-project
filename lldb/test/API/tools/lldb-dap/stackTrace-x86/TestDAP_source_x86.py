@@ -21,6 +21,7 @@ class TestDAP_stacktrace_x86(lldbdap_testcase.DAPTestCaseBase):
             initCommands=[
                 "settings set target.process.thread.step-in-avoid-nodebug false"
             ],
+            stopOnEntry=True,
         )
 
         source = "main.c"

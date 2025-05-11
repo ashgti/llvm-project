@@ -10,7 +10,6 @@ from lldbsuite.test import lldbutil
 import lldbdap_testcase
 
 
-@skip("Temporarily disable the breakpoint tests")
 class TestDAP_setFunctionBreakpoints(lldbdap_testcase.DAPTestCaseBase):
     @skipIfWindows
     def test_set_and_clear(self):
@@ -30,7 +29,7 @@ class TestDAP_setFunctionBreakpoints(lldbdap_testcase.DAPTestCaseBase):
         # without launching or attaching to a process, so we must start a
         # process in order to be able to set breakpoints.
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
         bp_id_12 = None
         functions = ["twelve"]
         # Set a function breakpoint at 'twelve'
@@ -128,7 +127,7 @@ class TestDAP_setFunctionBreakpoints(lldbdap_testcase.DAPTestCaseBase):
         breakpoint, like 'conditions' and 'hitCondition' settings."""
 
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
         # Set a breakpoint on "twelve" with no condition and no hitCondition
         functions = ["twelve"]
         breakpoint_ids = self.set_function_breakpoints(functions)

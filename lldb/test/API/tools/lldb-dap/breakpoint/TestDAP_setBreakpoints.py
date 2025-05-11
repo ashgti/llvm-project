@@ -12,7 +12,6 @@ import lldbdap_testcase
 import os
 
 
-@skip("Temporarily disable the breakpoint tests")
 class TestDAP_setBreakpoints(lldbdap_testcase.DAPTestCaseBase):
     def setUp(self):
         lldbdap_testcase.DAPTestCaseBase.setUp(self)
@@ -55,7 +54,7 @@ class TestDAP_setBreakpoints(lldbdap_testcase.DAPTestCaseBase):
             [source_folder, new_main_folder],
             [source_folder, new_other_folder],
         ]
-        self.launch(program, sourceMap=source_map)
+        self.launch(program, sourceMap=source_map, stopOnEntry=True)
 
         # breakpoint in main.cpp
         response = self.dap_server.request_setBreakpoints(new_main_path, [main_line])
@@ -77,8 +76,7 @@ class TestDAP_setBreakpoints(lldbdap_testcase.DAPTestCaseBase):
         self.assertEqual(new_other_path, breakpoint["source"]["path"])
         other_breakpoint_id = breakpoint["id"]
 
-        self.dap_server.request_continue()
-        self.verify_breakpoint_hit([other_breakpoint_id])
+        self.continue_to_breakpoints([other_breakpoint_id])
 
         # 2nd breakpoint again, which should be valid at this point
         response = self.dap_server.request_setBreakpoints(new_other_path, [other_line])
@@ -121,7 +119,7 @@ class TestDAP_setBreakpoints(lldbdap_testcase.DAPTestCaseBase):
         # without launching or attaching to a process, so we must start a
         # process in order to be able to set breakpoints.
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
 
         # Set 3 breakpoints and verify that they got set correctly
         response = self.dap_server.request_setBreakpoints(self.main_path, lines)
@@ -262,7 +260,7 @@ class TestDAP_setBreakpoints(lldbdap_testcase.DAPTestCaseBase):
         # without launching or attaching to a process, so we must start a
         # process in order to be able to set breakpoints.
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
 
         # Set one breakpoint and verify that it got set correctly.
         response = self.dap_server.request_setBreakpoints(self.main_path, lines)
@@ -297,15 +295,14 @@ class TestDAP_setBreakpoints(lldbdap_testcase.DAPTestCaseBase):
         loop_line = line_number("main.cpp", "// break loop")
 
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
         # Set a breakpoint at the loop line with no condition and no
         # hitCondition
         breakpoint_ids = self.set_source_breakpoints(self.main_path, [loop_line])
         self.assertEqual(len(breakpoint_ids), 1, "expect one breakpoint")
-        self.dap_server.request_continue()
 
         # Verify we hit the breakpoint we just set
-        self.verify_breakpoint_hit(breakpoint_ids)
+        self.continue_to_breakpoints(breakpoint_ids)
 
         # Make sure i is zero at first breakpoint
         i = int(self.dap_server.get_local_variable_value("i"))
@@ -352,7 +349,7 @@ class TestDAP_setBreakpoints(lldbdap_testcase.DAPTestCaseBase):
         loop_line = line_number("main.cpp", "// break loop")
 
         program = self.getBuildArtifact("a.out")
-        self.build_and_launch(program)
+        self.build_and_launch(program, stopOnEntry=True)
 
         # Set two breakpoints on the loop line at different columns.
         columns = [13, 39]
