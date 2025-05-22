@@ -1,12 +1,11 @@
 """
-Test lldb-dap disassemble request
+Test lldb-dap disassemble request.
 """
 
 
 from lldbsuite.test.decorators import *
 from lldbsuite.test.lldbtest import *
 import lldbdap_testcase
-import os
 
 
 class TestDAP_disassemble(lldbdap_testcase.DAPTestCaseBase):

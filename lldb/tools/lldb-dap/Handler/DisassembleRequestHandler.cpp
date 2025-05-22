@@ -21,53 +21,64 @@
 #include <cstdint>
 #include <optional>
 
+using namespace llvm;
+using namespace lldb;
 using namespace lldb_dap::protocol;
 
 namespace lldb_dap {
 
-static protocol::DisassembledInstruction GetInvalidInstruction() {
+static DisassembledInstruction GetInvalidInstruction() {
   DisassembledInstruction invalid_inst;
   invalid_inst.presentationHint =
       DisassembledInstruction::eDisassembledInstructionPresentationHintInvalid;
   return invalid_inst;
 }
 
-static lldb::SBAddress GetDisassembleStartAddress(lldb::SBTarget target,
-                                                  lldb::SBAddress addr,
-                                                  int64_t instruction_offset) {
+static SBAddress GetDisassembleStartAddress(SBTarget target, SBAddress addr,
+                                            int64_t instruction_offset) {
   if (instruction_offset == 0)
     return addr;
 
   if (target.GetMinimumOpcodeByteSize() == target.GetMaximumOpcodeByteSize()) {
     // We have fixed opcode size, so we can calculate the address directly,
     // negative or positive.
-    lldb::addr_t load_addr = addr.GetLoadAddress(target);
+    addr_t load_addr = addr.GetLoadAddress(target);
     load_addr += instruction_offset * target.GetMinimumOpcodeByteSize();
-    return lldb::SBAddress(load_addr, target);
+    return SBAddress(load_addr, target);
   }
 
   if (instruction_offset > 0) {
-    lldb::SBInstructionList forward_insts =
+    SBInstructionList forward_insts =
         target.ReadInstructions(addr, instruction_offset + 1);
     return forward_insts.GetInstructionAtIndex(forward_insts.GetSize() - 1)
         .GetAddress();
   }
 
   // We have a negative instruction offset, so we need to disassemble backwards.
-  // The opcode size is not fixed, so we have no idea where to start from.
-  // Let's try from the start of the current symbol if available.
-  auto symbol = addr.GetSymbol();
-  if (!symbol.IsValid())
+  // The opcode size is not fixed, use the max opcode size to approximate the
+  // offset.
+  const size_t backwards_instructions_count =
+      static_cast<size_t>(std::abs(instruction_offset));
+
+  SBAddress lookback_addr;
+  // Binary search for the nearest valid lookback address using our
+  // approximation offset.
+  addr_t approx_inst_offset =
+      backwards_instructions_count * target.GetMaximumOpcodeByteSize();
+  while (approx_inst_offset >= 0 && !lookback_addr.IsValid()) {
+    lookback_addr = target.ResolveLoadAddress(addr.GetLoadAddress(target) -
+                                              approx_inst_offset);
+    approx_inst_offset /= 2;
+  }
+  if (!lookback_addr.IsValid())
     return addr;
 
   // Add valid instructions before the current instruction using the symbol.
-  lldb::SBInstructionList symbol_insts =
-      target.ReadInstructions(symbol.GetStartAddress(), addr, nullptr);
+  SBInstructionList symbol_insts =
+      target.ReadInstructions(lookback_addr, addr, nullptr);
   if (!symbol_insts.IsValid() || symbol_insts.GetSize() == 0)
     return addr;
 
-  const auto backwards_instructions_count =
-      static_cast<size_t>(std::abs(instruction_offset));
   if (symbol_insts.GetSize() < backwards_instructions_count) {
     // We don't have enough instructions to disassemble backwards, so just
     // return the start address of the symbol.
@@ -80,8 +91,9 @@ static lldb::SBAddress GetDisassembleStartAddress(lldb::SBTarget target,
       .GetAddress();
 }
 
-static DisassembledInstruction ConvertSBInstructionToDisassembledInstruction(
-    lldb::SBTarget &target, lldb::SBInstruction &inst, bool resolve_symbols) {
+static DisassembledInstruction ToDisassembledInstruction(SBTarget &target,
+                                                         SBInstruction &inst,
+                                                         bool resolve_symbols) {
   if (!inst.IsValid())
     return GetInvalidInstruction();
 
@@ -93,12 +105,12 @@ static DisassembledInstruction ConvertSBInstructionToDisassembledInstruction(
   auto d = inst.GetData(target);
 
   std::string bytes;
-  llvm::raw_string_ostream sb(bytes);
+  raw_string_ostream sb(bytes);
   for (unsigned i = 0; i < inst.GetByteSize(); i++) {
-    lldb::SBError error;
+    SBError error;
     uint8_t b = d.GetUnsignedInt8(error, i);
     if (error.Success())
-      sb << llvm::format("%2.2x ", b);
+      sb << format("%2.2x ", b);
   }
 
   DisassembledInstruction disassembled_inst;
@@ -107,9 +119,9 @@ static DisassembledInstruction ConvertSBInstructionToDisassembledInstruction(
       bytes.size() > 0 ? bytes.substr(0, bytes.size() - 1) : "";
 
   std::string instruction;
-  llvm::raw_string_ostream si(instruction);
+  raw_string_ostream si(instruction);
 
-  lldb::SBSymbol symbol = addr.GetSymbol();
+  SBSymbol symbol = addr.GetSymbol();
   // Only add the symbol on the first line of the function.
   if (symbol.IsValid() && symbol.GetStartAddress() == addr) {
     // If we have a valid symbol, append it as a label prefix for the first
@@ -124,20 +136,19 @@ static DisassembledInstruction ConvertSBInstructionToDisassembledInstruction(
       disassembled_inst.symbol = symbol.GetDisplayName();
   }
 
-  si << llvm::formatv("{0,7} {1,12}", m, o);
+  si << formatv("{0,7} {1,12}", m, o);
   if (c && c[0]) {
     si << " ; " << c;
   }
 
   disassembled_inst.instruction = std::move(instruction);
 
-  auto line_entry = addr.GetLineEntry();
+  SBLineEntry line_entry = addr.GetLineEntry();
   // If the line number is 0 then the entry represents a compiler generated
   // location.
-
-  if (line_entry.GetStartAddress() == addr && line_entry.IsValid() &&
-      line_entry.GetFileSpec().IsValid() && line_entry.GetLine() != 0) {
-    auto source = CreateSource(line_entry);
+  if (line_entry.IsValid() && line_entry.GetFileSpec().IsValid() &&
+      line_entry.GetLine() != 0) {
+    Source source = CreateSource(line_entry);
     disassembled_inst.location = std::move(source);
 
     const auto line = line_entry.GetLine();
@@ -170,27 +181,78 @@ static DisassembledInstruction ConvertSBInstructionToDisassembledInstruction(
 /// Disassembles code stored at the provided location.
 /// Clients should only call this request if the corresponding capability
 /// `supportsDisassembleRequest` is true.
-llvm::Expected<DisassembleResponseBody>
+///
+/// Implementation notes:
+///
+/// VSCode / DAP will make repeated requests for disassembly asking for
+/// instruction offsets. VSCode will request an address with a negative
+/// instruction offset to load instructions around the target address.
+///
+/// NOTE: Returning less than the requested number of instructions will cause
+/// the Disassemble Viewer in VSCode to stop paging in new results.
+///
+/// However, the returned DisassembledInstruction's do not need to be
+/// contigious.
+///
+/// To better support the Disassembly Viewer in VSCode we should make a best
+/// effort attempt at representing the disassembly as a non-contigious set of
+/// instructions loadded into memory.
+///
+/// This means the resulting disassembly can cross a module boundary and may
+/// jump across memory ranges.
+///
+/// For example, the debuggee contains the following memory layout:
+///
+/// ```
+/// # Modules:
+///
+/// [ 0] [0x100000400-0x100000900] a.out
+/// [ 1] [0x100010000-0x100020000] libFoo.dylib
+///
+/// # Symbols:
+///
+/// [ 0] a.out`main: [0x1000004d0 - 0x100000510]
+/// [ 1] libFoo.dylib`add: [0x100010000 - 0x100010034]
+/// [ 2] libFoo.dylib`handler: [0x100010038 - 0x100010068]
+/// ```
+///
+/// And the following request is recieved:
+///
+/// ```
+/// {
+///   "command": "disassemble",
+///   "arguments": {
+///     "memoryReference": "0x100010000", // libFoo.dylib`add address
+///     "instructionOffset": -50,
+///     "instructionCount": 100,
+///   }
+/// }
+/// ```
+///
+/// Then lldb-dap should return DisassembledInstruction's reaching backwards
+/// into a.out`main even though there is a jump in addresses.
+Expected<DisassembleResponseBody>
 DisassembleRequestHandler::Run(const DisassembleArguments &args) const {
-  std::optional<lldb::addr_t> addr_opt =
-      DecodeMemoryReference(args.memoryReference);
+  std::optional<addr_t> addr_opt = DecodeMemoryReference(args.memoryReference);
   if (!addr_opt.has_value())
-    return llvm::make_error<DAPError>("Malformed memory reference: " +
-                                      args.memoryReference);
+    return make_error<DAPError>("Malformed memory reference: " +
+                                args.memoryReference);
 
-  lldb::addr_t addr_ptr = *addr_opt;
+  addr_t addr_ptr = *addr_opt;
   addr_ptr += args.offset.value_or(0);
-  lldb::SBAddress addr(addr_ptr, dap.target);
+  SBAddress addr(addr_ptr, dap.target);
   if (!addr.IsValid())
-    return llvm::make_error<DAPError>(
-        "Memory reference not found in the current binary.");
+    return make_error<DAPError>(
+        formatv("Memory reference ({0}) not found in {1}.", addr_ptr,
+                dap.target.GetProcess().GetProcessInfo().GetName())
+            .str());
 
   std::string flavor_string;
-  const auto target_triple = llvm::StringRef(dap.target.GetTriple());
+  const auto target_triple = StringRef(dap.target.GetTriple());
   // This handles both 32 and 64bit x86 architecture. The logic is duplicated in
   // `CommandObjectDisassemble::CommandOptions::OptionParsingStarting`
   if (target_triple.starts_with("x86")) {
-    const lldb::SBStructuredData flavor =
+    const SBStructuredData flavor =
         dap.debugger.GetSetting("target.x86-disassembly-flavor");
 
     const size_t str_length = flavor.GetStringValue(nullptr, 0);
@@ -200,60 +262,42 @@ DisassembleRequestHandler::Run(const DisassembleArguments &args) const {
     }
   }
 
-  // Offset (in instructions) to be applied after the byte offset (if any)
-  // before disassembling. Can be negative.
-  int64_t instruction_offset = args.instructionOffset.value_or(0);
+  std::vector<DisassembledInstruction> instructions;
+
+  // FIXME: This should find valid address ranges by using an offset like
+  // `target.GetMaximumOpcodeByteSize() * instOff` + adjusting for cross module
+  // boundaries.
 
   // Calculate a sufficient address to start disassembling from.
-  lldb::SBAddress disassemble_start_addr =
-      GetDisassembleStartAddress(dap.target, addr, instruction_offset);
-  if (!disassemble_start_addr.IsValid())
-    return llvm::make_error<DAPError>(
-        "Unexpected error while disassembling instructions.");
+  SBInstructionList insts =
+      addr.GetSymbol().GetInstructions(dap.target, flavor_string.data());
+  // for (int i = 0 ; i < insts.GetSize(); i++)
+  //   insts.GetInstructionAtIndex(i).GetAddress() == addr
 
-  lldb::SBInstructionList insts = dap.target.ReadInstructions(
-      disassemble_start_addr, args.instructionCount, flavor_string.c_str());
-  if (!insts.IsValid())
-    return llvm::make_error<DAPError>(
-        "Unexpected error while disassembling instructions.");
+  // auto approx_addr_offset =
+  //     addr.GetSymbol().GetSize(); // * dap.target.GetMaximumOpcodeByteSize();
+  // if (!disassemble_start_addr.IsValid())
+  //   return make_error<DAPError>(
+  //       "Unexpected error while disassembling instructions.");
+
+  // SBInstructionList insts = dap.target.ReadInstructions(
+  //     disassemble_start_addr, args.instructionCount, flavor_string.c_str());
+  // if (!insts.IsValid())
+  //   return make_error<DAPError>(
+  //       "Unexpected error while disassembling instructions.");
 
   // Conver the found instructions to the DAP format.
   const bool resolve_symbols = args.resolveSymbols.value_or(false);
-  std::vector<DisassembledInstruction> instructions;
-  size_t original_address_index = args.instructionCount;
+
   for (size_t i = 0; i < insts.GetSize(); ++i) {
-    lldb::SBInstruction inst = insts.GetInstructionAtIndex(i);
-    if (inst.GetAddress() == addr)
-      original_address_index = i;
-
-    instructions.push_back(ConvertSBInstructionToDisassembledInstruction(
-        dap.target, inst, resolve_symbols));
+    SBInstruction inst = insts.GetInstructionAtIndex(i);
+    instructions.push_back(
+        ToDisassembledInstruction(dap.target, inst, resolve_symbols));
   }
 
-  // Check if we miss instructions at the beginning.
-  if (instruction_offset < 0) {
-    const auto backwards_instructions_count =
-        static_cast<size_t>(std::abs(instruction_offset));
-    if (original_address_index < backwards_instructions_count) {
-      // We don't have enough instructions before the main address as was
-      // requested. Let's pad the start of the instructions with invalid
-      // instructions.
-      std::vector<DisassembledInstruction> invalid_instructions(
-          backwards_instructions_count - original_address_index,
-          GetInvalidInstruction());
-      instructions.insert(instructions.begin(), invalid_instructions.begin(),
-                          invalid_instructions.end());
-
-      // Trim excess instructions if needed.
-      if (instructions.size() > args.instructionCount)
-        instructions.resize(args.instructionCount);
-    }
-  }
-
-  // Pad the instructions with invalid instructions if needed.
-  while (instructions.size() < args.instructionCount) {
-    instructions.push_back(GetInvalidInstruction());
-  }
+  // Trim excess instructions if needed.
+  if (instructions.size() > args.instructionCount)
+    instructions.resize(args.instructionCount);
 
   return DisassembleResponseBody{std::move(instructions)};
 }

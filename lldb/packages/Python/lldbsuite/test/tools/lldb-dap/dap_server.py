@@ -740,6 +740,8 @@ class DebugCommunication(object):
         instructionCount=200,
         resolveSymbols=True,
     ):
+        print("instructionOffset", instructionOffset)
+        print("instructinoCount", instructionCount)
         args_dict = {
             "memoryReference": memoryReference,
             "instructionOffset": instructionOffset,
