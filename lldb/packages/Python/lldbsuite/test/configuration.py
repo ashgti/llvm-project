@@ -85,6 +85,9 @@ svn_info = ""
 # Default verbosity is 0.
 verbose = 0
 
+# Run type checker.
+check_types = ""  # Possible values are 'strict', 'warn' or ''/None/False.
+
 # By default, search from the script directory.
 # We can't use sys.path[0] to determine the script directory
 # because it doesn't work under a debugger
@@ -140,6 +143,7 @@ enabled_plugins = []
 # the build type of lldb
 # Typical values include Debug, Release, RelWithDebInfo and MinSizeRel
 cmake_build_type = None
+
 
 def shouldSkipBecauseOfCategories(test_categories):
     if use_categories:

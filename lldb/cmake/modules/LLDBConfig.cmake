@@ -74,6 +74,9 @@ option(LLDB_SKIP_DSYM "Whether to skip generating a dSYM when installing lldb." 
 option(LLDB_ENFORCE_STRICT_TEST_REQUIREMENTS
   "Fail to configure if certain requirements are not met for testing." OFF)
 
+set(LLDB_PYTHON_TESTS_CHECK_TYPES "" "strict" "warn" CACHE STRING 
+  "Specify if type checking python tests is enabled in either 'strict' or 'warn' mode.")
+
 set(LLDB_GLOBAL_INIT_DIRECTORY "" CACHE STRING
   "Path to the global lldbinit directory. Relative paths are resolved relative to the
   directory containing the LLDB library.")

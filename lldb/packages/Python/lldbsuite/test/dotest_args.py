@@ -116,6 +116,16 @@ def create_parser():
             "The location of llvm tools used for testing (yaml2obj, FileCheck, etc.)."
         ),
     )
+    group.add_argument(
+        "--check-types",
+        metavar="mode",
+        dest="check_types",
+        help=textwrap.dedent(
+            "Run python type checker prior to running tests, supported modes "
+            + 'are "strict" or "warn". "strict" mode will fail the test if '
+            + "type checking fails."
+        ),
+    )
 
     # Test filtering options
     group = parser.add_argument_group("Test filtering options")

@@ -269,6 +269,15 @@ def parseOptionsAndInitTestdirs():
     if args.make:
         configuration.make_path = args.make
 
+    if args.check_types:
+        if args.check_types not in ["strict", "warn"]:
+            logging.error(
+                '"%s" is not a valid check_types value, expected "strict" or "warn"; aborting...',
+                args.check_types,
+            )
+            sys.exit(-1)
+        configuration.check_types = args.check_types
+
     if args.dsymutil:
         configuration.dsymutil = args.dsymutil
     elif platform_system == "Darwin":
@@ -499,6 +508,8 @@ def setupSysPath():
     toolsLLDBServerPath = os.path.join(scriptPath, "tools", "lldb-server")
     intelpt = os.path.join(scriptPath, "tools", "intelpt")
 
+    mypyPaths = [pluginPath, toolsLLDBDAP, toolsLLDBServerPath, intelpt]
+
     # Insert script dir, plugin dir and lldb-server dir to the sys.path.
     sys.path.insert(0, pluginPath)
     # Adding test/tools/lldb-dap to the path makes it easy to
@@ -614,6 +625,12 @@ def setupSysPath():
         # sys.path[0].
         sys.path[1:1] = [lldbPythonDir]
 
+        mypyPaths.append(lldbPythonDir)
+
+    # Add this path for mypy to resolve the path if type checking is enabled.
+    if "MYPYPATH" not in os.environ:
+        os.environ["MYPYPATH"] = os.pathsep.join(mypyPaths)
+
 
 def visit_file(dir, name):
     # Try to match the regexp pattern, if specified.
@@ -626,8 +643,6 @@ def visit_file(dir, name):
         for file_regexp in configuration.skip_tests:
             if re.search(file_regexp, name):
                 return
-
-    # We found a match for our test.  Add it to the suite.
 
     # Update the sys.path first.
     if not sys.path.count(dir):
@@ -670,6 +685,9 @@ def visit_file(dir, name):
     # Forgo this module if the (base, filterspec) combo is invalid
     if configuration.filters and not filtered:
         return
+
+    # Check the types on the module if it wasn't filtered.
+    maybeCheckTypes(dir, name)
 
     if not filtered:
         # Add the entire file's worth of tests since we're not filtered.
@@ -948,6 +966,42 @@ def checkDAPSupport():
         if configuration.verbose:
             print(msg)
         configuration.skip_categories.append("lldb-dap")
+
+
+def maybeCheckTypes(dir, path):
+    """If type checking is enabled, validate the files types."""
+    if not configuration.check_types:
+        return
+
+    try:
+        import mypy  # type: ignore
+    except ImportError:
+        print(
+            "mypy is not skipping checking types.\n\nTo check types first install mypy using 'pip3 install mypy'."
+        )
+        return
+
+    file = os.path.join(dir, path)
+
+    if configuration.verbose:
+        print("Checking types with mypy", file)
+
+    # NOTE: Currently we do not enforce a zero exit code.
+    exit_code = subprocess.call(
+        [
+            sys.executable,
+            "-m",
+            "mypy",
+            "--config-file=" + lldbsuite.lldb_root + "/mypy.ini",
+            file,
+        ],
+        stdout=sys.stdout,
+        stderr=sys.stderr,
+    )
+
+    if exit_code != 0 and configuration.check_types == "strict":
+        print("Checking types with mypy failed")
+        sys.exit(1)
 
 
 def run_suite():
