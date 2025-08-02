@@ -98,6 +98,43 @@ protected:
   }
 };
 
+class CommandObjectProtocolServerConnect : public CommandObjectParsed {
+public:
+  CommandObjectProtocolServerConnect(CommandInterpreter &interpreter)
+      : CommandObjectParsed(interpreter, "protocol-server connect",
+                            "start protocol server",
+                            "protocol-server connect <protocol>") {
+    AddSimpleArgumentList(lldb::eArgTypeProtocol, eArgRepeatPlain);
+  }
+
+  ~CommandObjectProtocolServerConnect() override = default;
+
+protected:
+  void DoExecute(Args &args, CommandReturnObject &result) override {
+    if (args.GetArgumentCount() < 1) {
+      result.AppendError("no protocol specified");
+      return;
+    }
+
+    llvm::StringRef protocol = args.GetArgumentAtIndex(0);
+    ProtocolServer *server = ProtocolServer::GetOrCreate(protocol);
+    if (!server) {
+      result.AppendErrorWithFormatv(
+          "unsupported protocol: {0}. Supported protocols are: {1}", protocol,
+          llvm::join(ProtocolServer::GetSupportedProtocols(), ", "));
+      return;
+    }
+
+    if (llvm::Error error = server->ConnectToMultiplexer()) {
+      result.AppendErrorWithFormatv("{0}", llvm::fmt_consume(std::move(error)));
+      return;
+    }
+
+    result.AppendMessageWithFormatv("{0} server connected.", protocol);
+    result.SetStatus(eReturnStatusSuccessFinishNoResult);
+  }
+};
+
 class CommandObjectProtocolServerStop : public CommandObjectParsed {
 public:
   CommandObjectProtocolServerStop(CommandInterpreter &interpreter)
@@ -139,6 +176,9 @@ CommandObjectProtocolServer::CommandObjectProtocolServer(
                              "protocol-server") {
   LoadSubCommand("start", CommandObjectSP(new CommandObjectProtocolServerStart(
                               interpreter)));
+  LoadSubCommand(
+      "connect",
+      CommandObjectSP(new CommandObjectProtocolServerConnect(interpreter)));
   LoadSubCommand("stop", CommandObjectSP(
                              new CommandObjectProtocolServerStop(interpreter)));
 }

@@ -31,6 +31,7 @@ public:
 
   virtual llvm::Error Start(Connection connection) = 0;
   virtual llvm::Error Stop() = 0;
+  virtual llvm::Error ConnectToMultiplexer() = 0;
 
   virtual Socket *GetSocket() const = 0;
 };

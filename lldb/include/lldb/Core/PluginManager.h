@@ -325,7 +325,8 @@ public:
 
   // Protocol
   static bool RegisterPlugin(llvm::StringRef name, llvm::StringRef description,
-                             ProtocolServerCreateInstance create_callback);
+                             ProtocolServerCreateInstance create_callback,
+                             DebuggerInitializeCallback debugger_init_callback);
 
   static bool UnregisterPlugin(ProtocolServerCreateInstance create_callback);
 
@@ -470,8 +471,7 @@ public:
       llvm::StringRef schema,
       DebuggerInitializeCallback debugger_init_callback);
 
-  static bool
-  UnregisterPlugin(TraceCreateInstanceFromBundle create_callback);
+  static bool UnregisterPlugin(TraceCreateInstanceFromBundle create_callback);
 
   static TraceCreateInstanceFromBundle
   GetTraceCreateCallback(llvm::StringRef plugin_name);

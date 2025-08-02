@@ -31,6 +31,7 @@ add_host_subdirectory(common
   common/LZMA.cpp
   common/LockFileBase.cpp
   common/MainLoopBase.cpp
+  common/MCP.cpp
   common/MemoryMonitor.cpp
   common/MonitoringProcessLauncher.cpp
   common/NativeProcessProtocol.cpp

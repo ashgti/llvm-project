@@ -9,10 +9,16 @@
 #include "ProtocolServerMCP.h"
 #include "MCPError.h"
 #include "lldb/Core/PluginManager.h"
+#include "lldb/Host/MainLoopBase.h"
 #include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
+#include "lldb/lldb-types.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/Threading.h"
+#include <memory>
+#include <mutex>
+#include <string>
 #include <thread>
 #include <variant>
 
@@ -21,8 +27,6 @@ using namespace lldb_private::mcp;
 using namespace llvm;
 
 LLDB_PLUGIN_DEFINE(ProtocolServerMCP)
-
-static constexpr size_t kChunkSize = 1024;
 
 ProtocolServerMCP::ProtocolServerMCP() : ProtocolServer() {
   AddRequestHandler("initialize",
@@ -34,28 +38,37 @@ ProtocolServerMCP::ProtocolServerMCP() : ProtocolServer() {
   AddRequestHandler("tools/call",
                     std::bind(&ProtocolServerMCP::ToolsCallHandler, this,
                               std::placeholders::_1));
+  AddRequestHandler("$/evaluate", std::bind(&ProtocolServerMCP::EvaluateHandler,
+                                            this, std::placeholders::_1));
   AddNotificationHandler(
       "notifications/initialized", [](const protocol::Notification &) {
         LLDB_LOG(GetLog(LLDBLog::Host), "MCP initialization complete");
       });
-  AddTool(
-      std::make_unique<CommandTool>("lldb_command", "Run an lldb command."));
+  AddTool(std::make_unique<CommandTool>("lldb_command", "LLDB Debugger Command",
+                                        "Run an lldb command."));
   AddTool(std::make_unique<DebuggerListTool>(
-      "lldb_debugger_list", "List debugger instances with their debugger_id."));
+      "lldb_debugger_list", "LLDB Debug Session Provider",
+      "List debugger instances with their debugger_id."));
 }
 
 ProtocolServerMCP::~ProtocolServerMCP() { llvm::consumeError(Stop()); }
 
 void ProtocolServerMCP::Initialize() {
+  LLDB_LOG(GetLog(SystemLog::System), "Initialize MCP plugin");
   PluginManager::RegisterPlugin(GetPluginNameStatic(),
-                                GetPluginDescriptionStatic(), CreateInstance);
+                                GetPluginDescriptionStatic(), CreateInstance,
+                                DebuggerInitialize);
 }
 
 void ProtocolServerMCP::Terminate() {
   PluginManager::UnregisterPlugin(CreateInstance);
 }
 
+// FIXME: Maybe have a setting to auto connect?
+void ProtocolServerMCP::DebuggerInitialize(lldb_private::Debugger &debugger) {}
+
 lldb::ProtocolServerUP ProtocolServerMCP::CreateInstance() {
+  LLDB_LOG(GetLog(SystemLog::System), "Creating MCP server instance");
   return std::make_unique<ProtocolServerMCP>();
 }
 
@@ -91,42 +104,35 @@ void ProtocolServerMCP::Handle(protocol::Notification notification) {
 
 void ProtocolServerMCP::AcceptCallback(std::unique_ptr<Socket> socket) {
   LLDB_LOG(GetLog(LLDBLog::Host), "New MCP client ({0}) connected",
-           m_clients.size() + 1);
+           m_connected_clients.size() + 1);
 
   lldb::IOObjectSP io_sp = std::move(socket);
-  auto client_up = std::make_unique<Client>();
-  client_up->io_sp = io_sp;
-  Client *client = client_up.get();
+  auto conn_up = std::make_unique<Transport>(
+      io_sp, "socket-" + std::to_string(socket->GetNativeSocket()));
+  Transport *conn = conn_up.get();
 
   Status status;
   auto read_handle_up = m_loop.RegisterReadObject(
       io_sp,
-      [this, client](MainLoopBase &loop) {
-        if (Error error = ReadCallback(*client)) {
+      [this, conn](MainLoopBase &loop) {
+        if (Error error = ReadCallback(*conn)) {
           LLDB_LOG_ERROR(GetLog(LLDBLog::Host), std::move(error), "{0}");
-          client->read_handle_up.reset();
         }
       },
       status);
   if (status.Fail())
     return;
 
-  client_up->read_handle_up = std::move(read_handle_up);
-  m_clients.emplace_back(std::move(client_up));
+  m_connected_clients.emplace_back(std::move(conn_up),
+                                   std::move(read_handle_up));
 }
 
-llvm::Error ProtocolServerMCP::ReadCallback(Client &client) {
-  char chunk[kChunkSize];
-  size_t bytes_read = sizeof(chunk);
-  if (Status status = client.io_sp->Read(chunk, bytes_read); status.Fail())
+llvm::Error ProtocolServerMCP::ReadCallback(Transport &conn) {
+  if (Status status = conn.Read(); status.Fail())
     return status.takeError();
-  client.buffer.append(chunk, bytes_read);
 
-  for (std::string::size_type pos;
-       (pos = client.buffer.find('\n')) != std::string::npos;) {
-    llvm::Expected<std::optional<protocol::Message>> message =
-        HandleData(StringRef(client.buffer.data(), pos));
-    client.buffer = client.buffer.erase(0, pos + 1);
+  for (const auto &line : conn.consumeMessages()) {
+    llvm::Expected<std::optional<protocol::Message>> message = HandleData(line);
     if (!message)
       return message.takeError();
 
@@ -134,12 +140,63 @@ llvm::Error ProtocolServerMCP::ReadCallback(Client &client) {
       std::string Output;
       llvm::raw_string_ostream OS(Output);
       OS << llvm::formatv("{0}", toJSON(**message)) << '\n';
-      size_t num_bytes = Output.size();
-      return client.io_sp->Write(Output.data(), num_bytes).takeError();
+      if (Status status = conn.Write(Output); status.Fail())
+        return status.takeError();
     }
   }
 
   return llvm::Error::success();
+}
+
+Error ProtocolServerMCP::ConnectToMultiplexer() {
+  std::lock_guard<std::mutex> guard(m_server_mutex);
+  if (m_running)
+    return llvm::createStringError("the MCP server is already running");
+
+  m_running = true;
+  Expected<TransportUP> maybe_conn = Transport::Connect("multiplexer");
+  if (!maybe_conn)
+    return maybe_conn.takeError();
+  m_multiplexer = std::make_unique<Client>(std::move(*maybe_conn));
+  Client *client = m_multiplexer.get();
+  Status status;
+  auto read_handle_up = m_loop.RegisterReadObject(
+      m_multiplexer->GetIO(),
+      [this, client](MainLoopBase &loop) {
+        if (Error error = ReadCallback(*client->GetConn())) {
+          LLDB_LOG_ERROR(GetLog(LLDBLog::Host), std::move(error), "{0}");
+        }
+      },
+      status);
+  if (status.Fail())
+    return status.takeError();
+  m_listen_handlers.emplace_back(std::move(read_handle_up));
+
+  std::vector<lldb::user_id_t> ids;
+  const size_t num_debuggers = Debugger::GetNumDebuggers();
+  for (size_t i = 0; i < num_debuggers; ++i) {
+    lldb::DebuggerSP debugger_sp = Debugger::GetDebuggerAtIndex(i);
+    if (!debugger_sp)
+      continue;
+
+    ids.emplace_back(debugger_sp->GetID());
+  }
+
+  if (Status status = client->Notify({ids}); status.Fail())
+    return status.takeError();
+
+  RunLoop();
+
+  return Error::success();
+}
+
+void ProtocolServerMCP::RunLoop() {
+  if (m_loop_thread.joinable())
+    return;
+  m_loop_thread = std::thread([=] {
+    llvm::set_thread_name("protocol-server.mcp");
+    m_loop.Run();
+  });
 }
 
 llvm::Error ProtocolServerMCP::Start(ProtocolServer::Connection connection) {
@@ -165,10 +222,7 @@ llvm::Error ProtocolServerMCP::Start(ProtocolServer::Connection connection) {
 
   m_running = true;
   m_listen_handlers = std::move(*handles);
-  m_loop_thread = std::thread([=] {
-    llvm::set_thread_name("protocol-server.mcp");
-    m_loop.Run();
-  });
+  RunLoop();
 
   return llvm::Error::success();
 }
@@ -193,7 +247,8 @@ llvm::Error ProtocolServerMCP::Stop() {
     std::lock_guard<std::mutex> guard(m_server_mutex);
     m_listener.reset();
     m_listen_handlers.clear();
-    m_clients.clear();
+    m_connected_clients.clear();
+    m_multiplexer.reset();
   }
 
   return llvm::Error::success();
@@ -214,10 +269,13 @@ ProtocolServerMCP::HandleData(llvm::StringRef data) {
       protocol::Error protocol_error;
       llvm::handleAllErrors(
           response.takeError(),
-          [&](const MCPError &err) { protocol_error = err.toProtcolError(); },
+          [&](const MCPError &err) {
+            protocol_error.code = err.getCode();
+            protocol_error.message = err.getMessage();
+          },
           [&](const llvm::ErrorInfoBase &err) {
-            protocol_error.error.code = -1;
-            protocol_error.error.message = err.message();
+            protocol_error.code = -1;
+            protocol_error.message = err.message();
           });
       protocol_error.id = request->id;
       return protocol_error;
@@ -267,11 +325,13 @@ void ProtocolServerMCP::AddNotificationHandler(llvm::StringRef method,
   m_notification_handlers[method] = std::move(handler);
 }
 
+static constexpr StringLiteral kProtocolVersion = "2024-11-05";
+
 llvm::Expected<protocol::Response>
 ProtocolServerMCP::InitializeHandler(const protocol::Request &request) {
   protocol::Response response;
   response.result.emplace(llvm::json::Object{
-      {"protocolVersion", protocol::kVersion},
+      {"protocolVersion", kProtocolVersion},
       {"capabilities", GetCapabilities()},
       {"serverInfo",
        llvm::json::Object{{"name", kName}, {"version", kVersion}}}});
@@ -288,6 +348,14 @@ ProtocolServerMCP::ToolsListHandler(const protocol::Request &request) {
 
   response.result.emplace(llvm::json::Object{{"tools", std::move(tools)}});
 
+  return response;
+}
+
+llvm::Expected<protocol::Response>
+ProtocolServerMCP::EvaluateHandler(const protocol::Request &request) {
+  protocol::Response response;
+  response.id = request.id;
+  response.result = "Hello world!";
   return response;
 }
 

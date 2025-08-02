@@ -6,29 +6,29 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "MCPError.h"
-#include "llvm/Support/Error.h"
-#include "llvm/Support/raw_ostream.h"
-#include <system_error>
+// #include "MCPError.h"
+// #include "llvm/Support/Error.h"
+// #include "llvm/Support/raw_ostream.h"
+// #include <system_error>
 
-namespace lldb_private::mcp {
+// namespace lldb_private::mcp {
 
-char MCPError::ID;
+// char MCPError::ID;
 
-MCPError::MCPError(std::string message, int64_t error_code)
-    : m_message(message), m_error_code(error_code) {}
+// MCPError::MCPError(std::string message, int64_t error_code)
+//     : m_message(message), m_error_code(error_code) {}
 
-void MCPError::log(llvm::raw_ostream &OS) const { OS << m_message; }
+// void MCPError::log(llvm::raw_ostream &OS) const { OS << m_message; }
 
-std::error_code MCPError::convertToErrorCode() const {
-  return llvm::inconvertibleErrorCode();
-}
+// std::error_code MCPError::convertToErrorCode() const {
+//   return llvm::inconvertibleErrorCode();
+// }
 
-protocol::Error MCPError::toProtcolError() const {
-  protocol::Error error;
-  error.error.code = m_error_code;
-  error.error.message = m_message;
-  return error;
-}
+// protocol::Error MCPError::toProtcolError() const {
+//   protocol::Error error;
+//   error.error.code = m_error_code;
+//   error.error.message = m_message;
+//   return error;
+// }
 
-} // namespace lldb_private::mcp
+// } // namespace lldb_private::mcp

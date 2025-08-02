@@ -18,7 +18,7 @@ namespace lldb_private::mcp {
 
 class Tool {
 public:
-  Tool(std::string name, std::string description);
+  Tool(std::string name, std::string title, std::string description);
   virtual ~Tool() = default;
 
   virtual llvm::Expected<protocol::TextResult>
@@ -34,6 +34,7 @@ public:
 
 private:
   std::string m_name;
+  std::string m_title;
   std::string m_description;
 };
 

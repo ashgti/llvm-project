@@ -129,8 +129,8 @@ public:
   virtual ~JSONRPCTransport() = default;
 
 protected:
-  virtual llvm::Error WriteImpl(const std::string &message) override;
-  virtual llvm::Expected<std::string>
+  llvm::Error WriteImpl(const std::string &message) override;
+  llvm::Expected<std::string>
   ReadImpl(const std::chrono::microseconds &timeout) override;
 
   static constexpr llvm::StringLiteral kMessageSeparator = "\n";

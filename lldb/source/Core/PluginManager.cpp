@@ -1147,7 +1147,8 @@ llvm::StringRef PluginManager::GetProcessPluginNameAtIndex(uint32_t idx) {
   return GetProcessInstances().GetNameAtIndex(idx);
 }
 
-llvm::StringRef PluginManager::GetProcessPluginDescriptionAtIndex(uint32_t idx) {
+llvm::StringRef
+PluginManager::GetProcessPluginDescriptionAtIndex(uint32_t idx) {
   return GetProcessInstances().GetDescriptionAtIndex(idx);
 }
 
@@ -1181,9 +1182,10 @@ static ProtocolServerInstances &GetProtocolServerInstances() {
 
 bool PluginManager::RegisterPlugin(
     llvm::StringRef name, llvm::StringRef description,
-    ProtocolServerCreateInstance create_callback) {
-  return GetProtocolServerInstances().RegisterPlugin(name, description,
-                                                     create_callback);
+    ProtocolServerCreateInstance create_callback,
+    DebuggerInitializeCallback debugger_init_callback) {
+  return GetProtocolServerInstances().RegisterPlugin(
+      name, description, create_callback, debugger_init_callback);
 }
 
 bool PluginManager::UnregisterPlugin(
@@ -1535,8 +1537,7 @@ FileSpec PluginManager::FindSymbolFileInBundle(const FileSpec &symfile_bundle,
 
 #pragma mark Trace
 
-struct TraceInstance
-    : public PluginInstance<TraceCreateInstanceFromBundle> {
+struct TraceInstance : public PluginInstance<TraceCreateInstanceFromBundle> {
   TraceInstance(
       llvm::StringRef name, llvm::StringRef description,
       CallbackType create_callback_from_bundle,
@@ -1581,7 +1582,8 @@ PluginManager::GetTraceCreateCallback(llvm::StringRef plugin_name) {
 }
 
 TraceCreateInstanceForLiveProcess
-PluginManager::GetTraceCreateCallbackForLiveProcess(llvm::StringRef plugin_name) {
+PluginManager::GetTraceCreateCallbackForLiveProcess(
+    llvm::StringRef plugin_name) {
   if (auto instance = GetTracePluginInstances().GetInstanceForName(plugin_name))
     return instance->create_callback_for_live_process;
 
@@ -1898,7 +1900,8 @@ static REPLInstances &GetREPLInstances() {
   return g_instances;
 }
 
-bool PluginManager::RegisterPlugin(llvm::StringRef name, llvm::StringRef description,
+bool PluginManager::RegisterPlugin(llvm::StringRef name,
+                                   llvm::StringRef description,
                                    REPLCreateInstance create_callback,
                                    LanguageSet supported_languages) {
   return GetREPLInstances().RegisterPlugin(name, description, create_callback,
@@ -1942,15 +1945,15 @@ void PluginManager::DebuggerInitialize(Debugger &debugger) {
   GetTracePluginInstances().PerformDebuggerCallback(debugger);
   GetScriptedInterfaceInstances().PerformDebuggerCallback(debugger);
   GetLanguageInstances().PerformDebuggerCallback(debugger);
+  GetProtocolServerInstances().PerformDebuggerCallback(debugger);
 }
 
 // This is the preferred new way to register plugin specific settings.  e.g.
 // This will put a plugin's settings under e.g.
 // "plugin.<plugin_type_name>.<plugin_type_desc>.SETTINGNAME".
-static lldb::OptionValuePropertiesSP
-GetDebuggerPropertyForPlugins(Debugger &debugger, llvm::StringRef plugin_type_name,
-                              llvm::StringRef plugin_type_desc,
-                              bool can_create) {
+static lldb::OptionValuePropertiesSP GetDebuggerPropertyForPlugins(
+    Debugger &debugger, llvm::StringRef plugin_type_name,
+    llvm::StringRef plugin_type_desc, bool can_create) {
   lldb::OptionValuePropertiesSP parent_properties_sp(
       debugger.GetValueProperties());
   if (parent_properties_sp) {
@@ -2182,9 +2185,8 @@ bool PluginManager::CreateSettingForJITLoaderPlugin(
 
 static const char *kOperatingSystemPluginName("os");
 
-lldb::OptionValuePropertiesSP
-PluginManager::GetSettingForOperatingSystemPlugin(Debugger &debugger,
-                                                  llvm::StringRef setting_name) {
+lldb::OptionValuePropertiesSP PluginManager::GetSettingForOperatingSystemPlugin(
+    Debugger &debugger, llvm::StringRef setting_name) {
   lldb::OptionValuePropertiesSP properties_sp;
   lldb::OptionValuePropertiesSP plugin_type_properties_sp(
       GetDebuggerPropertyForPlugins(

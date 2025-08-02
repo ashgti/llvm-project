@@ -12,6 +12,7 @@
 #include "Protocol.h"
 #include "Tool.h"
 #include "lldb/Core/ProtocolServer.h"
+#include "lldb/Host/MCP.h"
 #include "lldb/Host/MainLoop.h"
 #include "lldb/Host/Socket.h"
 #include "llvm/ADT/StringMap.h"
@@ -24,11 +25,13 @@ public:
   ProtocolServerMCP();
   virtual ~ProtocolServerMCP() override;
 
-  virtual llvm::Error Start(ProtocolServer::Connection connection) override;
-  virtual llvm::Error Stop() override;
+  llvm::Error Start(ProtocolServer::Connection connection) override;
+  llvm::Error Stop() override;
+  llvm::Error ConnectToMultiplexer() override;
 
   static void Initialize();
   static void Terminate();
+  static void DebuggerInitialize(lldb_private::Debugger &debugger);
 
   static llvm::StringRef GetPluginNameStatic() { return "MCP"; }
   static llvm::StringRef GetPluginDescriptionStatic();
@@ -65,11 +68,16 @@ private:
   ToolsListHandler(const protocol::Request &);
   llvm::Expected<protocol::Response>
   ToolsCallHandler(const protocol::Request &);
+  llvm::Expected<protocol::Response> EvaluateHandler(const protocol::Request &);
 
   protocol::Capabilities GetCapabilities();
+  llvm::Error ReadCallback(Transport &client);
+  void RunLoop();
 
   llvm::StringLiteral kName = "lldb-mcp";
   llvm::StringLiteral kVersion = "0.1.0";
+
+  std::mutex m_server_mutex;
 
   bool m_running = false;
 
@@ -77,17 +85,11 @@ private:
   std::thread m_loop_thread;
 
   std::unique_ptr<Socket> m_listener;
+  ClientUP m_multiplexer;
   std::vector<MainLoopBase::ReadHandleUP> m_listen_handlers;
 
-  struct Client {
-    lldb::IOObjectSP io_sp;
-    MainLoopBase::ReadHandleUP read_handle_up;
-    std::string buffer;
-  };
-  llvm::Error ReadCallback(Client &client);
-  std::vector<std::unique_ptr<Client>> m_clients;
-
-  std::mutex m_server_mutex;
+  std::vector<std::pair<TransportUP, MainLoopBase::ReadHandleUP>>
+      m_connected_clients;
   llvm::StringMap<std::unique_ptr<Tool>> m_tools;
 
   llvm::StringMap<RequestHandler> m_request_handlers;

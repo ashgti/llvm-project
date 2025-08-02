@@ -39,13 +39,15 @@ createTextResult(std::string output, bool is_error = false) {
 
 } // namespace
 
-Tool::Tool(std::string name, std::string description)
-    : m_name(std::move(name)), m_description(std::move(description)) {}
+Tool::Tool(std::string name, std::string title, std::string description)
+    : m_name(std::move(name)), m_title(title),
+      m_description(std::move(description)) {}
 
 protocol::ToolDefinition Tool::GetDefinition() const {
   protocol::ToolDefinition definition;
   definition.name = m_name;
-  definition.description.emplace(m_description);
+  definition.title = m_title;
+  definition.description = m_description;
 
   if (std::optional<llvm::json::Value> input_schema = GetSchema())
     definition.inputSchema = *input_schema;
