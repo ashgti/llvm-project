@@ -480,4 +480,42 @@ json::Value toJSON(const Void &R) { return json::Object{}; }
 
 bool fromJSON(const json::Value &V, Void &R, json::Path P) { return true; }
 
+json::Value toJSON(const TargetRef &R) {
+  return json::Object{{"id", R.id}, {"name", R.name}};
+}
+
+bool fromJSON(const json::Value &V, TargetRef &R, json::Path P) {
+  json::ObjectMapper O(V, P);
+  return O && O.map("id", R.id) && O.map("name", R.name);
+}
+
+json::Value toJSON(const DebuggerRef &R) {
+  return json::Object{{"id", R.id}, {"targets", R.targets}};
+}
+
+bool fromJSON(const json::Value &V, DebuggerRef &R, json::Path P) {
+  json::ObjectMapper O(V, P);
+  return O && O.map("id", R.id) && O.map("targets", R.targets);
+}
+
+json::Value toJSON(const DebuggersChangedParams &D) {
+  return json::Object{{"debuggers", D.debuggers}};
+}
+
+bool fromJSON(const json::Value &V, DebuggersChangedParams &D, json::Path P) {
+  json::ObjectMapper O(V, P);
+  return O && O.map("debuggers", D.debuggers);
+}
+
+json::Value toJSON(const EvaluateParams &P) {
+  return json::Object{{"debugger_id", P.debugger_id},
+                      {"target_id", P.target_id},
+                      {"expression", P.expression}};
+}
+bool fromJSON(const json::Value &V, EvaluateParams &E, json::Path P) {
+  json::ObjectMapper O(V, P);
+  return O && O.map("debugger_id", E.debugger_id) &&
+         O.map("target_id", E.target_id) && O.map("expression", E.expression);
+}
+
 } // namespace lldb_protocol::mcp

@@ -2,6 +2,7 @@ add_lldb_library(lldbProtocolMCP NO_PLUGIN_DEPENDENCIES
   Binder.cpp
   MCPError.cpp
   Protocol.cpp
+  Relay.cpp
   Server.cpp
   Tool.cpp
   Transport.cpp

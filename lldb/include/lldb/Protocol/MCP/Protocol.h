@@ -369,6 +369,37 @@ struct ToolsCallResult {
 llvm::json::Value toJSON(const ToolsCallResult &);
 bool fromJSON(const llvm::json::Value &, ToolsCallResult &, llvm::json::Path);
 
+/// LLDB Extensions for internal usage.
+
+struct TargetRef {
+  lldb::user_id_t id = 0;
+  std::string name;
+};
+llvm::json::Value toJSON(const TargetRef &);
+bool fromJSON(const llvm::json::Value &, TargetRef &, llvm::json::Path);
+
+struct DebuggerRef {
+  lldb::user_id_t id = 0;
+  std::vector<TargetRef> targets;
+};
+llvm::json::Value toJSON(const DebuggerRef &);
+bool fromJSON(const llvm::json::Value &, DebuggerRef &, llvm::json::Path);
+
+struct DebuggersChangedParams {
+  std::vector<DebuggerRef> debuggers;
+};
+llvm::json::Value toJSON(const DebuggersChangedParams &);
+bool fromJSON(const llvm::json::Value &, DebuggersChangedParams &,
+              llvm::json::Path);
+
+struct EvaluateParams {
+  lldb::user_id_t debugger_id = 0;
+  lldb::user_id_t target_id = 0;
+  std::string expression;
+};
+llvm::json::Value toJSON(const EvaluateParams &);
+bool fromJSON(const llvm::json::Value &, EvaluateParams &, llvm::json::Path);
+
 } // namespace lldb_protocol::mcp
 
 #endif
