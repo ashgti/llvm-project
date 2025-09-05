@@ -14,9 +14,7 @@
 #include "lldb/Host/HostInfo.h"
 #include "lldb/Host/MainLoop.h"
 #include "lldb/Host/MainLoopBase.h"
-#include "lldb/lldb-forward.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/Support/Error.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Testing/Support/Error.h"
@@ -26,55 +24,6 @@
 
 namespace lldb_dap_tests {
 
-class TestTransport final
-    : public lldb_private::Transport<lldb_dap::protocol::Request,
-                                     lldb_dap::protocol::Response,
-                                     lldb_dap::protocol::Event> {
-public:
-  using Message = lldb_private::Transport<lldb_dap::protocol::Request,
-                                          lldb_dap::protocol::Response,
-                                          lldb_dap::protocol::Event>::Message;
-
-  TestTransport(lldb_private::MainLoop &loop, MessageHandler &handler)
-      : m_loop(loop), m_handler(handler) {}
-
-  llvm::Error Send(const lldb_dap::protocol::Event &e) override {
-    m_loop.AddPendingCallback([this, e](lldb_private::MainLoopBase &) {
-      this->m_handler.Received(e);
-    });
-    return llvm::Error::success();
-  }
-
-  llvm::Error Send(const lldb_dap::protocol::Request &r) override {
-    m_loop.AddPendingCallback([this, r](lldb_private::MainLoopBase &) {
-      this->m_handler.Received(r);
-    });
-    return llvm::Error::success();
-  }
-
-  llvm::Error Send(const lldb_dap::protocol::Response &r) override {
-    m_loop.AddPendingCallback([this, r](lldb_private::MainLoopBase &) {
-      this->m_handler.Received(r);
-    });
-    return llvm::Error::success();
-  }
-
-  llvm::Expected<lldb_private::MainLoop::ReadHandleUP>
-  RegisterMessageHandler(lldb_private::MainLoop &loop,
-                         MessageHandler &handler) override;
-
-  void Log(llvm::StringRef message) override {
-    log_messages.emplace_back(message);
-  }
-
-  std::vector<std::string> log_messages;
-
-private:
-  lldb_private::MainLoop &m_loop;
-  MessageHandler &m_handler;
-  lldb::FileSP m_dummy_file;
-};
-
 /// A base class for tests that need transport configured for communicating DAP
 /// messages.
 class TransportBase : public testing::Test {
@@ -82,13 +31,18 @@ protected:
   lldb_private::SubsystemRAII<lldb_private::FileSystem, lldb_private::HostInfo>
       subsystems;
   lldb_private::MainLoop loop;
-  std::unique_ptr<TestTransport> transport;
+  std::unique_ptr<
+      TestTransport<lldb_dap::protocol::Request, lldb_dap::protocol::Response,
+                    lldb_dap::protocol::Event>>
+      transport;
   MockMessageHandler<lldb_dap::protocol::Request, lldb_dap::protocol::Response,
                      lldb_dap::protocol::Event>
       client;
 
   void SetUp() override {
-    transport = std::make_unique<TestTransport>(loop, client);
+    transport = std::make_unique<
+        TestTransport<lldb_dap::protocol::Request, lldb_dap::protocol::Response,
+                      lldb_dap::protocol::Event>>(&loop, &client);
   }
 };
 

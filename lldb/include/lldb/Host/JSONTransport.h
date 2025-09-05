@@ -18,6 +18,7 @@
 #include "lldb/Utility/IOObject.h"
 #include "lldb/Utility/Status.h"
 #include "lldb/lldb-forward.h"
+#include "llvm/ADT/FunctionExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
@@ -25,8 +26,11 @@
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
+#include <mutex>
+#include <optional>
 #include <string>
 #include <system_error>
+#include <type_traits>
 #include <variant>
 #include <vector>
 
@@ -49,6 +53,57 @@ public:
 private:
   std::string m_unhandled_contents;
 };
+
+class InvalidParams : public llvm::ErrorInfo<InvalidParams> {
+public:
+  static char ID;
+
+  explicit InvalidParams(std::string method, std::string context)
+      : m_method(std::move(method)), m_context(std::move(context)) {}
+
+  void log(llvm::raw_ostream &OS) const override;
+  std::error_code convertToErrorCode() const override;
+
+private:
+  std::string m_method;
+  std::string m_context;
+};
+
+// Value for tracking functions that have a void param or result.
+using VoidT = std::monostate;
+
+template <typename T> using Callback = llvm::unique_function<T>;
+
+template <typename T>
+using Reply = typename std::conditional<
+    std::is_same_v<T, VoidT> == true, llvm::unique_function<void(llvm::Error)>,
+    llvm::unique_function<void(llvm::Expected<T>)>>::type;
+
+template <typename Result, typename Params>
+using OutgoingRequest = typename std::conditional<
+    std::is_same_v<Params, VoidT> == true,
+    llvm::unique_function<void(Reply<Result>)>,
+    llvm::unique_function<void(const Params &, Reply<Result>)>>::type;
+
+template <typename Params>
+using OutgoingNotification = typename std::conditional<
+    std::is_same_v<Params, VoidT> == true, llvm::unique_function<void()>,
+    llvm::unique_function<void(const Params &)>>::type;
+
+template <typename Req, typename Resp>
+Resp make_response(const Req &, llvm::json::Value result);
+template <typename Req, typename Resp>
+Resp make_response(const Req &, llvm::Error error);
+template <typename Req, typename Id>
+Req make_request(Id id, llvm::StringRef method,
+                 const std::optional<llvm::json::Value> &params);
+template <typename Evt>
+Evt make_event(llvm::StringRef method,
+               const std::optional<llvm::json::Value> &params);
+template <typename T, typename Id> Id get_id(const T &);
+template <typename T> llvm::StringRef get_method(const T &);
+template <typename T> llvm::json::Value get_params(const T &);
+template <typename T> llvm::Expected<llvm::json::Value> get_result(const T &);
 
 /// A transport is responsible for maintaining the connection to a client
 /// application, and reading/writing structured messages to it.
@@ -100,22 +155,287 @@ public:
   virtual llvm::Expected<MainLoop::ReadHandleUP>
   RegisterMessageHandler(MainLoop &loop, MessageHandler &handler) = 0;
 
-  // FIXME: Refactor mcp::Server to not directly access log on the transport.
-  // protected:
+protected:
   template <typename... Ts> inline auto Logv(const char *Fmt, Ts &&...Vals) {
     Log(llvm::formatv(Fmt, std::forward<Ts>(Vals)...).str());
   }
   virtual void Log(llvm::StringRef message) = 0;
+
+  /// Function object to reply to a call.
+  /// Each instance must be called exactly once, otherwise:
+  ///  - the bug is logged, and (in debug mode) an assert will fire
+  ///  - if there was no reply, an error reply is sent
+  ///  - if there were multiple replies, only the first is sent
+  class ReplyOnce {
+    std::atomic<bool> replied = {false};
+    const Req req;
+    Transport *transport;               // Null when moved-from.
+    Transport::MessageHandler *handler; // Null when moved-from.
+
+  public:
+    ReplyOnce(const Req req, Transport *transport,
+              Transport::MessageHandler *handler)
+        : req(req), transport(transport), handler(handler) {
+      assert(handler);
+    }
+    ReplyOnce(ReplyOnce &&other)
+        : replied(other.replied.load()), req(other.req),
+          transport(other.transport), handler(other.handler) {
+      other.transport = nullptr;
+      other.handler = nullptr;
+    }
+    ReplyOnce &operator=(ReplyOnce &&) = delete;
+    ReplyOnce(const ReplyOnce &) = delete;
+    ReplyOnce &operator=(const ReplyOnce &) = delete;
+
+    ~ReplyOnce() {
+      if (transport && handler && !replied) {
+        assert(false && "must reply to all calls!");
+        (*this)(make_response<Req, Resp>(
+            req, llvm::createStringError("failed to reply")));
+      }
+    }
+
+    void operator()(const Resp &resp) {
+      assert(transport && handler && "moved-from!");
+      if (replied.exchange(true)) {
+        assert(false && "must reply to each call only once!");
+        return;
+      }
+
+      if (llvm::Error error = transport->Send(resp))
+        handler->OnError(std::move(error));
+    }
+  };
+
+public:
+  /// Binder collects a table of functions that handle calls.
+  ///
+  /// The wrapper takes care of parsing/serializing responses.
+  template <typename Id = int64_t>
+  class Binder : public Transport::MessageHandler {
+  public:
+    explicit Binder(Transport &transport, Id seq)
+        : m_transport(transport), m_seq(seq) {}
+
+    Binder(const Binder &) = delete;
+    Binder &operator=(const Binder &) = delete;
+
+    /// Bind a handler on transport disconnect.
+    template <typename Fn, typename... Args>
+    void disconnected(Fn fn, Args... args) {
+      m_disconnect_handler = std::bind(fn, std::forward<Args>(args)...);
+    }
+
+    /// Bind a handler on error when communicating with the transport.
+    template <typename Fn, typename... Args> void error(Fn fn, Args... args) {
+      m_error_handler = std::bind(fn, std::forward<Args>(args)...);
+    }
+
+    template <typename T>
+    static llvm::Expected<T> parse(const llvm::json::Value &raw,
+                                   llvm::StringRef method) {
+      T result;
+      llvm::json::Path::Root root;
+      if (!fromJSON(raw, result, root)) {
+        // Dump the relevant parts of the broken message.
+        std::string context;
+        llvm::raw_string_ostream OS(context);
+        root.printErrorContext(raw, OS);
+        return llvm::make_error<InvalidParams>(method.str(), context);
+      }
+      return std::move(result);
+    }
+
+    /// Bind a handler for a request.
+    /// e.g. Bind.request("peek", this, &ThisModule::peek);
+    /// Handler should be e.g. Expected<PeekResult> peek(const PeekParams&);
+    /// PeekParams must be JSON parsable and PeekResult must be serializable.
+    template <typename Result, typename Params, typename Fn, typename... Args>
+    void bind(llvm::StringLiteral method, Fn fn, Args... args) {
+      assert(m_request_handlers.find(method) == m_request_handlers.end() &&
+             "request already bound");
+      if constexpr (std::is_void_v<Params> || std::is_same_v<VoidT, Params>) {
+        std::function<llvm::Expected<Result>()> handler =
+            std::bind(fn, std::forward<Args>(args)...);
+        m_request_handlers[method] =
+            [handler](const Req &req,
+                      llvm::unique_function<void(const Resp &)> reply) {
+              llvm::Expected<Result> result = handler();
+              if (!result)
+                return reply(make_response<Req, Resp>(req, result.takeError()));
+              reply(make_response<Req, Resp>(req, toJSON(*result)));
+            };
+      } else {
+        std::function<llvm::Expected<Result>(const Params &)> handler =
+            std::bind(fn, std::forward<Args>(args)...);
+        m_request_handlers[method] =
+            [handler, method](const Req &req,
+                              llvm::unique_function<void(const Resp &)> reply) {
+              llvm::Expected<Params> params =
+                  parse<Params>(get_params(req), method);
+              if (!params)
+                return reply(make_response<Req, Resp>(req, params.takeError()));
+
+              llvm::Expected<Result> result = handler(*params);
+              if (!result)
+                return reply(make_response<Req, Resp>(req, result.takeError()));
+
+              reply(make_response<Req, Resp>(req, toJSON(*result)));
+            };
+      }
+    }
+
+    /// Bind a handler for a event.
+    /// e.g. bind("peek", &ThisModule::peek, this, std::placeholders::_1);
+    /// Handler should be e.g. void peek(const PeekParams&);
+    /// PeekParams must be JSON parsable.
+    template <typename Params, typename Fn, typename... Args>
+    void bind(llvm::StringLiteral method, Fn fn, Args... args) {
+      assert(m_event_handlers.find(method) == m_event_handlers.end() &&
+             "event already bound");
+      std::function<void(const Params &)> handler =
+          std::bind(fn, std::forward<Args>(args)...);
+      m_event_handlers[method] = [this, method, handler](const Evt &evt) {
+        llvm::Expected<Params> params = parse<Params>(evt, method);
+        if (!params)
+          return OnError(params.takeError());
+        handler(*params);
+      };
+    }
+
+    /// Bind a function object to be used for outgoing requests.
+    /// e.g. OutgoingRequest<Params, Result> Edit = bind("edit"); Params must be
+    /// JSON-serializable, Result must be parsable.
+    template <typename Result, typename Params>
+    OutgoingRequest<Result, Params> bind(llvm::StringLiteral method) {
+      if constexpr (std::is_void_v<Params> || std::is_same_v<VoidT, Params>) {
+        return [this, method](Reply<Result> fn) {
+          std::scoped_lock<std::recursive_mutex> guard(m_mutex);
+          Id id = m_seq++;
+          Req req = make_request<Req, Id>(id, method, std::nullopt);
+          m_pending_responses[id] = [fn = std::move(fn),
+                                     method](const Resp &resp) mutable {
+            llvm::Expected<llvm::json::Value> result = get_result<Resp>(resp);
+            if (!result)
+              return fn(result.takeError());
+            fn(parse<Result>(*result, method));
+          };
+          if (llvm::Error error = m_transport.Send(req))
+            OnError(std::move(error));
+        };
+      } else {
+        return [this, method](const Params &params, Reply<Result> fn) {
+          std::scoped_lock<std::recursive_mutex> guard(m_mutex);
+          Id id = m_seq++;
+          Req req =
+              make_request<Req, Id>(id, method, llvm::json::Value(params));
+          m_pending_responses[id] = [fn = std::move(fn),
+                                     method](const Resp &resp) mutable {
+            llvm::Expected<llvm::json::Value> result = get_result<Resp>(resp);
+            if (!result)
+              return fn(result.takeError());
+            fn(parse<Result>(*result, method));
+          };
+          if (llvm::Error error = m_transport.Send(req))
+            OnError(std::move(error));
+        };
+      }
+    }
+
+    /// Bind a function object to be used for outgoing notifications.
+    /// e.g. OutgoingNotification<LogParams> Log = bind("log");
+    /// LogParams must be JSON-serializable.
+    template <typename Params>
+    OutgoingNotification<Params> bind(llvm::StringLiteral method) {
+      if constexpr (std::is_void_v<Params> || std::is_same_v<VoidT, Params>) {
+        return [this, method]() {
+          if (llvm::Error error =
+                  m_transport.Send(make_event<Evt>(method, std::nullopt)))
+            OnError(std::move(error));
+        };
+      } else {
+        return [this, method](const Params &params) {
+          if (llvm::Error error =
+                  m_transport.Send(make_event<Evt>(method, toJSON(params))))
+            OnError(std::move(error));
+        };
+      }
+    }
+
+    void Received(const Evt &evt) override {
+      std::scoped_lock<std::recursive_mutex> guard(m_mutex);
+      auto it = m_event_handlers.find(get_method(evt));
+      if (it == m_event_handlers.end()) {
+        OnError(llvm::createStringError(
+            llvm::formatv("no handled for event {0}", toJSON(evt))));
+        return;
+      }
+      it->second(evt);
+    }
+
+    void Received(const Req &req) override {
+      ReplyOnce reply(req, &m_transport, this);
+
+      std::scoped_lock<std::recursive_mutex> guard(m_mutex);
+      auto it = m_request_handlers.find(get_method(req));
+      if (it == m_request_handlers.end()) {
+        reply(make_response<Req, Resp>(
+            req, llvm::createStringError("method not found")));
+        return;
+      }
+
+      it->second(req, std::move(reply));
+    }
+
+    void Received(const Resp &resp) override {
+      std::scoped_lock<std::recursive_mutex> guard(m_mutex);
+      auto it = m_pending_responses.find(get_id<Resp, Id>(resp));
+      if (it == m_pending_responses.end()) {
+        OnError(llvm::createStringError(
+            llvm::formatv("no pending request for {0}", toJSON(resp))));
+        return;
+      }
+
+      it->second(resp);
+      m_pending_responses.erase(it);
+    }
+
+    void OnError(llvm::Error err) override {
+      std::scoped_lock<std::recursive_mutex> guard(m_mutex);
+      if (m_error_handler)
+        m_error_handler(&m_transport, std::move(err));
+    }
+
+    void OnClosed() override {
+      std::scoped_lock<std::recursive_mutex> guard(m_mutex);
+      if (m_disconnect_handler)
+        m_disconnect_handler(&m_transport);
+    }
+
+  private:
+    std::recursive_mutex m_mutex;
+    Transport &m_transport;
+    Id m_seq;
+    std::map<Id, Callback<void(const Resp &)>> m_pending_responses;
+    llvm::StringMap<Callback<void(const Req &, Callback<void(const Resp &)>)>>
+        m_request_handlers;
+    llvm::StringMap<Callback<void(const Evt &)>> m_event_handlers;
+    Callback<void(Transport *)> m_disconnect_handler;
+    Callback<void(Transport *, llvm::Error)> m_error_handler;
+  };
+  template <typename Id> using BinderUP = std::unique_ptr<Binder<Id>>;
 };
 
-/// A JSONTransport will encode and decode messages using JSON.
+/// A IOTransport will encode and decode messages using an IOObject like a
+/// file or a socket.
 template <typename Req, typename Resp, typename Evt>
-class JSONTransport : public Transport<Req, Resp, Evt> {
+class IOTransport : public Transport<Req, Resp, Evt> {
 public:
   using Transport<Req, Resp, Evt>::Transport;
   using MessageHandler = typename Transport<Req, Resp, Evt>::MessageHandler;
 
-  JSONTransport(lldb::IOObjectSP in, lldb::IOObjectSP out)
+  IOTransport(lldb::IOObjectSP in, lldb::IOObjectSP out)
       : m_in(in), m_out(out) {}
 
   llvm::Error Send(const Evt &evt) override { return Write(evt); }
@@ -127,7 +447,7 @@ public:
     Status status;
     MainLoop::ReadHandleUP read_handle = loop.RegisterReadObject(
         m_in,
-        std::bind(&JSONTransport::OnRead, this, std::placeholders::_1,
+        std::bind(&IOTransport::OnRead, this, std::placeholders::_1,
                   std::ref(handler)),
         status);
     if (status.Fail()) {
@@ -140,15 +460,13 @@ public:
   /// detail.
   static constexpr size_t kReadBufferSize = 1024;
 
-  // FIXME: Write should be protected.
+protected:
   llvm::Error Write(const llvm::json::Value &message) {
     this->Logv("<-- {0}", message);
     std::string output = Encode(message);
     size_t bytes_written = output.size();
     return m_out->Write(output.data(), bytes_written).takeError();
   }
-
-protected:
   virtual llvm::Expected<std::vector<std::string>> Parse() = 0;
   virtual std::string Encode(const llvm::json::Value &message) = 0;
 
@@ -203,9 +521,9 @@ private:
 
 /// A transport class for JSON with a HTTP header.
 template <typename Req, typename Resp, typename Evt>
-class HTTPDelimitedJSONTransport : public JSONTransport<Req, Resp, Evt> {
+class HTTPDelimitedJSONTransport : public IOTransport<Req, Resp, Evt> {
 public:
-  using JSONTransport<Req, Resp, Evt>::JSONTransport;
+  using IOTransport<Req, Resp, Evt>::IOTransport;
 
 protected:
   /// Encodes messages based on
@@ -231,8 +549,8 @@ protected:
       for (const llvm::StringRef &header :
            llvm::split(headers, kHeaderSeparator)) {
         auto [key, value] = header.split(kHeaderFieldSeparator);
-        // 'Content-Length' is the only meaningful key at the moment. Others are
-        // ignored.
+        // 'Content-Length' is the only meaningful key at the moment. Others
+        // are ignored.
         if (!key.equals_insensitive(kHeaderContentLength))
           continue;
 
@@ -270,9 +588,9 @@ protected:
 
 /// A transport class for JSON RPC.
 template <typename Req, typename Resp, typename Evt>
-class JSONRPCTransport : public JSONTransport<Req, Resp, Evt> {
+class JSONRPCTransport : public IOTransport<Req, Resp, Evt> {
 public:
-  using JSONTransport<Req, Resp, Evt>::JSONTransport;
+  using IOTransport<Req, Resp, Evt>::IOTransport;
 
 protected:
   std::string Encode(const llvm::json::Value &message) override {

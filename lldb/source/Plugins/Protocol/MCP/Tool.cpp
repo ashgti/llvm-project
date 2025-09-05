@@ -10,6 +10,7 @@
 #include "lldb/Interpreter/CommandInterpreter.h"
 #include "lldb/Interpreter/CommandReturnObject.h"
 #include "lldb/Protocol/MCP/Protocol.h"
+#include "llvm/Support/Error.h"
 
 using namespace lldb_private;
 using namespace lldb_protocol;
@@ -18,14 +19,14 @@ using namespace llvm;
 
 namespace {
 struct CommandToolArguments {
-  uint64_t debugger_id;
+  int64_t debugger_id = -1;
   std::string arguments;
 };
 
 bool fromJSON(const llvm::json::Value &V, CommandToolArguments &A,
               llvm::json::Path P) {
   llvm::json::ObjectMapper O(V, P);
-  return O && O.map("debugger_id", A.debugger_id) &&
+  return O && O.mapOptional("debugger_id", A.debugger_id) &&
          O.mapOptional("arguments", A.arguments);
 }
 
@@ -52,8 +53,17 @@ CommandTool::Call(const lldb_protocol::mcp::ToolArguments &args) {
   if (!fromJSON(std::get<json::Value>(args), arguments, root))
     return root.getError();
 
-  lldb::DebuggerSP debugger_sp =
-      Debugger::FindDebuggerWithID(arguments.debugger_id);
+  lldb::DebuggerSP debugger_sp;
+  if (arguments.debugger_id != -1) {
+    debugger_sp = Debugger::FindDebuggerWithID(arguments.debugger_id);
+  } else {
+    if (Debugger::GetNumDebuggers() == 1)
+      debugger_sp = Debugger::GetDebuggerAtIndex(0);
+    else
+      return createStringError(
+          "debugger not specified and multiple debuggers detected, specify a "
+          "debugger_id to evaluate a command");
+  }
   if (!debugger_sp)
     return createStringError(
         llvm::formatv("no debugger with id {0}", arguments.debugger_id));
@@ -83,9 +93,7 @@ std::optional<llvm::json::Value> CommandTool::GetSchema() const {
   llvm::json::Object str_type{{"type", "string"}};
   llvm::json::Object properties{{"debugger_id", std::move(id_type)},
                                 {"arguments", std::move(str_type)}};
-  llvm::json::Array required{"debugger_id"};
   llvm::json::Object schema{{"type", "object"},
-                            {"properties", std::move(properties)},
-                            {"required", std::move(required)}};
+                            {"properties", std::move(properties)}};
   return schema;
 }

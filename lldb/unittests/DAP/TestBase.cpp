@@ -32,21 +32,6 @@ using lldb_private::FileSystem;
 using lldb_private::MainLoop;
 using lldb_private::Pipe;
 
-Expected<MainLoop::ReadHandleUP>
-TestTransport::RegisterMessageHandler(MainLoop &loop, MessageHandler &handler) {
-  Expected<lldb::FileUP> dummy_file = FileSystem::Instance().Open(
-      FileSpec(FileSystem::DEV_NULL), File::eOpenOptionReadWrite);
-  if (!dummy_file)
-    return dummy_file.takeError();
-  m_dummy_file = std::move(*dummy_file);
-  lldb_private::Status status;
-  auto handle = loop.RegisterReadObject(
-      m_dummy_file, [](lldb_private::MainLoopBase &) {}, status);
-  if (status.Fail())
-    return status.takeError();
-  return handle;
-}
-
 void DAPTestBase::SetUp() {
   TransportBase::SetUp();
   std::error_code EC;
@@ -61,12 +46,10 @@ void DAPTestBase::SetUp() {
 }
 
 void DAPTestBase::TearDown() {
-  if (core) {
+  if (core)
     ASSERT_THAT_ERROR(core->discard(), Succeeded());
-  }
-  if (binary) {
+  if (binary)
     ASSERT_THAT_ERROR(binary->discard(), Succeeded());
-  }
 }
 
 void DAPTestBase::SetUpTestSuite() {

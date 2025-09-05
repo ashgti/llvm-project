@@ -54,11 +54,9 @@ llvm::StringRef ProtocolServerMCP::GetPluginDescriptionStatic() {
 }
 
 void ProtocolServerMCP::Extend(lldb_protocol::mcp::Server &server) const {
-  server.AddNotificationHandler("notifications/initialized",
-                                [](const lldb_protocol::mcp::Notification &) {
-                                  LLDB_LOG(GetLog(LLDBLog::Host),
-                                           "MCP initialization complete");
-                                });
+  server.m_binder.bind<VoidT>("notifications/initialized", []() {
+    LLDB_LOG(GetLog(LLDBLog::Host), "MCP initialization complete");
+  });
   server.AddTool(
       std::make_unique<CommandTool>("lldb_command", "Run an lldb command."));
   server.AddResourceProvider(std::make_unique<DebuggerResourceProvider>());
@@ -75,15 +73,18 @@ void ProtocolServerMCP::AcceptCallback(std::unique_ptr<Socket> socket) {
         LLDB_LOG(GetLog(LLDBLog::Host), "{0}: {1}", client_name, message);
       });
   auto instance_up = std::make_unique<lldb_protocol::mcp::Server>(
-      std::string(kName), std::string(kVersion), std::move(transport_up),
-      m_loop);
+      std::string(kName), std::string(kVersion), *transport_up, m_loop,
+      [](llvm::StringRef message) {
+        LLDB_LOG(GetLog(LLDBLog::Host), "MCP Server: {0}", message);
+      });
   Extend(*instance_up);
-  llvm::Error error = instance_up->Run();
-  if (error) {
-    LLDB_LOG_ERROR(log, std::move(error), "Failed to run MCP server: {0}");
+  auto handle = instance_up->RegisterClient();
+  if (!handle) {
+    LLDB_LOG_ERROR(log, handle.takeError(), "Failed to run MCP server: {0}");
     return;
   }
-  m_instances.push_back(std::move(instance_up));
+  m_instances.push_back(std::make_tuple(
+      std::move(instance_up), std::move(transport_up), std::move(*handle)));
 }
 
 llvm::Error ProtocolServerMCP::Start(ProtocolServer::Connection connection) {
@@ -113,31 +114,11 @@ llvm::Error ProtocolServerMCP::Start(ProtocolServer::Connection connection) {
   std::string address =
       llvm::join(m_listener->GetListeningConnectionURI(), ", ");
 
-  FileSpec user_lldb_dir = HostInfo::GetUserLLDBDir();
-
-  Status error(llvm::sys::fs::create_directory(user_lldb_dir.GetPath()));
-  if (error.Fail())
-    return error.takeError();
-
-  m_mcp_registry_entry_path = user_lldb_dir.CopyByAppendingPathComponent(
-      formatv("lldb-mcp-{0}.json", getpid()).str());
-
   ServerInfo info;
   info.connection_uri = listening_uris[0];
   info.pid = getpid();
 
-  std::string buf = formatv("{0}", toJSON(info)).str();
-  size_t num_bytes = buf.size();
-
-  const File::OpenOptions flags = File::eOpenOptionWriteOnly |
-                                  File::eOpenOptionCanCreate |
-                                  File::eOpenOptionTruncate;
-  llvm::Expected<lldb::FileUP> file =
-      FileSystem::Instance().Open(m_mcp_registry_entry_path, flags,
-                                  lldb::eFilePermissionsFileDefault, false);
-  if (!file)
-    return file.takeError();
-  if (llvm::Error error = (*file)->Write(buf.data(), num_bytes).takeError())
+  if (llvm::Error error = ServerInfo::Write(info))
     return error;
 
   m_running = true;

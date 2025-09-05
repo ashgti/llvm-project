@@ -14,6 +14,7 @@
 #include "lldb/Host/Socket.h"
 #include "lldb/Protocol/MCP/Protocol.h"
 #include "lldb/Protocol/MCP/Server.h"
+#include "lldb/Protocol/MCP/Transport.h"
 #include <thread>
 
 namespace lldb_private::mcp {
@@ -21,10 +22,10 @@ namespace lldb_private::mcp {
 class ProtocolServerMCP : public ProtocolServer {
 public:
   ProtocolServerMCP();
-  virtual ~ProtocolServerMCP() override;
+  ~ProtocolServerMCP() override;
 
-  virtual llvm::Error Start(ProtocolServer::Connection connection) override;
-  virtual llvm::Error Stop() override;
+  llvm::Error Start(ProtocolServer::Connection connection) override;
+  llvm::Error Stop() override;
 
   static void Initialize();
   static void Terminate();
@@ -56,7 +57,10 @@ private:
   std::unique_ptr<Socket> m_listener;
 
   std::vector<MainLoopBase::ReadHandleUP> m_listen_handlers;
-  std::vector<std::unique_ptr<lldb_protocol::mcp::Server>> m_instances;
+  std::vector<std::tuple<std::unique_ptr<lldb_protocol::mcp::Server>,
+                         std::unique_ptr<lldb_protocol::mcp::MCPTransport>,
+                         MainLoopBase::ReadHandleUP>>
+      m_instances;
 };
 } // namespace lldb_private::mcp
 
