@@ -18,6 +18,7 @@
 #include "lldb/API/SBTarget.h"
 #include "lldb/API/SBThread.h"
 #include "lldb/Host/PosixApi.h" // Adds PATH_MAX for windows
+#include "llvm/ADT/StringRef.h"
 
 #include <iomanip>
 #include <optional>
@@ -150,26 +151,11 @@ std::optional<protocol::Module> CreateModule(const lldb::SBTarget &target,
   return p_module;
 }
 
-std::optional<protocol::Source> CreateSource(const lldb::SBFileSpec &file) {
-  if (!file.IsValid())
-    return std::nullopt;
-
-  protocol::Source source;
-  if (const char *name = file.GetFilename())
-    source.name = name;
-  char path[PATH_MAX] = "";
-  if (file.GetPath(path, sizeof(path)) &&
-      lldb::SBFileSpec::ResolvePath(path, path, PATH_MAX))
-    source.path = path;
-  return source;
-}
-
 bool IsAssemblySource(const protocol::Source &source) {
   // According to the specification, a source must have either `path` or
   // `sourceReference` specified. We use `path` for sources with known source
   // code, and `sourceReferences` when falling back to assembly.
-  return source.sourceReference.value_or(LLDB_DAP_INVALID_SRC_REF) >
-         LLDB_DAP_INVALID_SRC_REF;
+  return source.sourceReference > LLDB_DAP_INVALID_SRC_REF;
 }
 
 bool DisplayAssemblySource(lldb::SBDebugger &debugger,

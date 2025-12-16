@@ -42,6 +42,7 @@ add_lldb_library(lldbDAP
   Handler/ExceptionInfoRequestHandler.cpp
   Handler/InitializeRequestHandler.cpp
   Handler/LaunchRequestHandler.cpp
+  Handler/LoadedSourcesRequestHandler.cpp
   Handler/LocationsRequestHandler.cpp
   Handler/ModulesRequestHandler.cpp
   Handler/ModuleSymbolsRequestHandler.cpp

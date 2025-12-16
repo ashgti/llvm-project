@@ -64,4 +64,23 @@ llvm::json::Value toJSON(const MemoryEventBody &MEB) {
       {"count", MEB.count}};
 }
 
+static llvm::json::Value toJSON(const LoadedSourceEventBody::Reason &R) {
+  switch (R) {
+  case LoadedSourceEventBody::eReasonNew:
+    return "new";
+  case LoadedSourceEventBody::eReasonChanged:
+    return "changed";
+  case LoadedSourceEventBody::eReasonRemoved:
+    return "removed";
+  }
+  llvm_unreachable("unhandled loaded source event reason!");
+}
+
+llvm::json::Value toJSON(const LoadedSourceEventBody &B) {
+  return json::Object{
+      {"reason", B.reason},
+      {"source", B.source},
+  };
+}
+
 } // namespace lldb_dap::protocol

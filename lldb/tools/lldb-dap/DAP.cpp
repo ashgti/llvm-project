@@ -21,16 +21,12 @@
 #include "Protocol/ProtocolRequests.h"
 #include "Protocol/ProtocolTypes.h"
 #include "ProtocolUtils.h"
-#include "Transport.h"
-#include "lldb/API/SBBreakpoint.h"
 #include "lldb/API/SBCommandInterpreter.h"
 #include "lldb/API/SBEvent.h"
+#include "lldb/API/SBFileSpec.h"
 #include "lldb/API/SBLanguageRuntime.h"
 #include "lldb/API/SBListener.h"
-#include "lldb/API/SBMutex.h"
 #include "lldb/API/SBProcess.h"
-#include "lldb/API/SBStream.h"
-#include "lldb/Host/JSONTransport.h"
 #include "lldb/Host/MainLoop.h"
 #include "lldb/Host/MainLoopBase.h"
 #include "lldb/Utility/Status.h"
@@ -47,6 +43,7 @@
 #include "llvm/Support/Error.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <cassert>
@@ -56,7 +53,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <functional>
-#include <future>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -129,7 +125,7 @@ DAP::DAP(Log &log, const ReplMode default_repl_mode,
       progress_event_reporter(
           [&](const ProgressEvent &event) { SendJSON(event.ToJSON()); }),
       repl_mode(default_repl_mode), no_lldbinit(no_lldbinit),
-      m_client_name(client_name), m_loop(loop) {
+      source_tracker(*this), m_client_name(client_name), m_loop(loop) {
   configuration.preInitCommands = std::move(pre_init_commands);
   RegisterRequests();
 }
@@ -653,6 +649,102 @@ ReplMode DAP::DetectReplMode(lldb::SBFrame frame, std::string &expression,
   llvm_unreachable("enum cases exhausted.");
 }
 
+SourceTracker::SourceTracker(DAP &dap) : dap(dap) {}
+
+std::vector<protocol::Source> SourceTracker::ResetAndGetSources() {
+  std::lock_guard<std::mutex> lock(m_mutex);
+  m_sources_list.clear();
+
+  std::vector<protocol::Source> sources;
+  lldb::SBTarget target = dap.target;
+  for (uint32_t i = 0; i < target.GetNumModules(); ++i) {
+    lldb::SBModule module = target.GetModuleAtIndex(i);
+    for (uint32_t j = 0; j < module.GetNumCompileUnits(); ++j) {
+      lldb::SBCompileUnit cu = module.GetCompileUnitAtIndex(j);
+      lldb::SBFileSpec spec = cu.GetFileSpec();
+      if (auto source = dap.source_tracker.CreateSource(spec);
+          source && m_sources_list.find(source->path) == m_sources_list.end()) {
+        sources.push_back(*source);
+        m_sources_list.insert(source->path);
+      }
+      for (uint32_t k = 0; k < cu.GetNumSupportFiles(); ++k) {
+        lldb::SBFileSpec support_file = cu.GetSupportFileAtIndex(k);
+        if (auto source = dap.source_tracker.CreateSource(support_file);
+            source &&
+            m_sources_list.find(source->path) == m_sources_list.end()) {
+          sources.push_back(*source);
+          m_sources_list.insert(source->path);
+        }
+      }
+    }
+  }
+
+  return sources;
+}
+
+void SourceTracker::OnModuleEvent(lldb::SBModule &module, uint32_t event_mask) {
+  if (!dap.configuration_done ||
+      !(event_mask & lldb::SBTarget::eBroadcastBitModulesUnloaded) ||
+      !(event_mask & lldb::SBTarget::eBroadcastBitSymbolsLoaded) ||
+      !(event_mask & lldb::SBTarget::eBroadcastBitSymbolsChanged))
+    return;
+
+  for (uint32_t j = 0; j < module.GetNumCompileUnits(); ++j) {
+    lldb::SBCompileUnit cu = module.GetCompileUnitAtIndex(j);
+    lldb::SBFileSpec spec = cu.GetFileSpec();
+    OnSourceEvent(spec, event_mask);
+    for (uint32_t k = 0; k < cu.GetNumSupportFiles(); ++k)
+      OnSourceEvent(cu.GetSupportFileAtIndex(k), event_mask);
+  }
+}
+
+void SourceTracker::OnSourceEvent(const lldb::SBFileSpec &spec,
+                                  uint32_t event_mask) {
+  if (!spec || !spec.Exists())
+    return;
+
+  const bool unloaded =
+      event_mask & lldb::SBTarget::eBroadcastBitModulesUnloaded;
+
+  std::optional<protocol::Source> source = CreateSource(spec);
+  if (!source)
+    return;
+
+  std::lock_guard<std::mutex> lock(m_mutex);
+
+  if (unloaded) {
+    if (m_sources_list.erase(source->path)) {
+      Send(*source, protocol::LoadedSourceEventBody::eReasonRemoved);
+    }
+  } else if (m_sources_list.find(source->path) == m_sources_list.end()) {
+    m_sources_list.insert(source->path);
+    Send(*source, protocol::LoadedSourceEventBody::eReasonNew);
+  }
+  // skipping 'changed' event, at the moment there isn't any meaningful changes
+  // we'd need to notify the client for.
+}
+
+void SourceTracker::Send(protocol::Source source,
+                         protocol::LoadedSourceEventBody::Reason reason) {
+  dap.Send(
+      protocol::Event{"loadedSource", LoadedSourceEventBody{reason, source}});
+}
+
+std::optional<protocol::Source>
+SourceTracker::CreateSource(const lldb::SBFileSpec &spec) {
+  if (!spec.IsValid())
+    return std::nullopt;
+
+  protocol::Source source;
+  if (const char *name = spec.GetFilename())
+    source.name = name;
+  char path[PATH_MAX] = "";
+  if (spec.GetPath(path, sizeof(path)) &&
+      lldb::SBFileSpec::ResolvePath(path, path, PATH_MAX))
+    source.path = path;
+  return source;
+}
+
 std::optional<protocol::Source> DAP::ResolveSource(const lldb::SBFrame &frame) {
   if (!frame.IsValid())
     return std::nullopt;
@@ -663,7 +755,7 @@ std::optional<protocol::Source> DAP::ResolveSource(const lldb::SBFrame &frame) {
     return ResolveAssemblySource(frame_pc);
   }
 
-  return CreateSource(frame_line_entry.GetFileSpec());
+  return source_tracker.CreateSource(frame_line_entry.GetFileSpec());
 }
 
 std::optional<protocol::Source> DAP::ResolveSource(lldb::SBAddress address) {
@@ -674,7 +766,7 @@ std::optional<protocol::Source> DAP::ResolveSource(lldb::SBAddress address) {
   if (!line_entry.IsValid())
     return std::nullopt;
 
-  return CreateSource(line_entry.GetFileSpec());
+  return source_tracker.CreateSource(line_entry.GetFileSpec());
 }
 
 std::optional<protocol::Source>
@@ -1459,13 +1551,12 @@ std::vector<protocol::Breakpoint> DAP::SetSourceBreakpoints(
   if (source.sourceReference) {
     // Breakpoint set by assembly source.
     auto &existing_breakpoints =
-        m_source_assembly_breakpoints[*source.sourceReference];
+        m_source_assembly_breakpoints[source.sourceReference];
     response_breakpoints =
         SetSourceBreakpoints(source, breakpoints, existing_breakpoints);
   } else {
     // Breakpoint set by a regular source file.
-    const auto path = source.path.value_or("");
-    auto &existing_breakpoints = m_source_breakpoints[path];
+    auto &existing_breakpoints = m_source_breakpoints[source.path];
     response_breakpoints =
         SetSourceBreakpoints(source, breakpoints, existing_breakpoints);
   }
@@ -1550,6 +1641,7 @@ void DAP::RegisterRequests() {
   RegisterRequest<ExceptionInfoRequestHandler>();
   RegisterRequest<InitializeRequestHandler>();
   RegisterRequest<LaunchRequestHandler>();
+  RegisterRequest<LoadedSourcesRequestHandler>();
   RegisterRequest<LocationsRequestHandler>();
   RegisterRequest<NextRequestHandler>();
   RegisterRequest<PauseRequestHandler>();

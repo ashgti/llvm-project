@@ -412,6 +412,8 @@ static void HandleTargetEvent(const lldb::SBEvent &event, Log &log) {
     const bool remove_module =
         event_mask & lldb::SBTarget::eBroadcastBitModulesUnloaded;
 
+    std::vector<protocol::Source> affected_sources;
+
     // NOTE: Both mutexes must be acquired to prevent deadlock when
     // handling `modules_request`, which also requires both locks.
     lldb::SBMutex api_mutex = dap->GetAPIMutex();
@@ -425,6 +427,8 @@ static void HandleTargetEvent(const lldb::SBEvent &event, Log &log) {
           CreateModule(dap->target, module, remove_module);
       if (!p_module)
         continue;
+
+      dap->source_tracker.OnModuleEvent(module, event_mask);
 
       llvm::StringRef module_id = p_module->id;
 
@@ -570,8 +574,8 @@ static void HandleDiagnosticEvent(const lldb::SBEvent &event, Log &log) {
   }
 }
 
-// Note: EventThread() is architecturally different from the other functions in
-// this file. While the functions above are event helpers that operate on a
+// Note: EventThread() is architecturally different from the other functions
+// in this file. While the functions above are event helpers that operate on a
 // single DAP instance (taking `DAP &dap` as a parameter), EventThread() is a
 // shared event processing loop that:
 // 1. Listens to events from a shared debugger instance

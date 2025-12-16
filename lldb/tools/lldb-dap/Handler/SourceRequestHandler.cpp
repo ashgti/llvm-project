@@ -8,18 +8,14 @@
 
 #include "DAP.h"
 #include "Handler/RequestHandler.h"
-#include "LLDBUtils.h"
 #include "Protocol/ProtocolRequests.h"
 #include "Protocol/ProtocolTypes.h"
 #include "lldb/API/SBAddress.h"
 #include "lldb/API/SBExecutionContext.h"
-#include "lldb/API/SBFrame.h"
 #include "lldb/API/SBInstructionList.h"
-#include "lldb/API/SBProcess.h"
 #include "lldb/API/SBStream.h"
 #include "lldb/API/SBSymbol.h"
 #include "lldb/API/SBTarget.h"
-#include "lldb/API/SBThread.h"
 #include "lldb/lldb-types.h"
 #include "llvm/Support/Error.h"
 
@@ -29,9 +25,8 @@ namespace lldb_dap {
 /// the source code for a given source reference.
 llvm::Expected<protocol::SourceResponseBody>
 SourceRequestHandler::Run(const protocol::SourceArguments &args) const {
-
   uint32_t source_ref =
-      args.source->sourceReference.value_or(args.sourceReference);
+      args.source ? args.source->sourceReference : args.sourceReference;
   const std::optional<lldb::addr_t> source_addr_opt =
       dap.GetSourceReferenceAddress(source_ref);
 

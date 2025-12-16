@@ -401,18 +401,18 @@ struct Source {
   /// The short name of the source. Every source returned from the debug adapter
   /// has a name. When sending a source to the debug adapter this name is
   /// optional.
-  std::optional<std::string> name;
+  std::string name;
 
   /// The path of the source to be shown in the UI. It is only used to locate
   /// and load the content of the source if no `sourceReference` is specified
   /// (or its value is 0).
-  std::optional<std::string> path;
+  std::string path;
 
   /// If the value > 0 the contents of the source must be retrieved through the
   /// `source` request (even if a path is specified). Since a `sourceReference`
   /// is only valid for a session, it can not be used to persist a source. The
   /// value should be less than or equal to 2147483647 (2^31-1).
-  std::optional<int32_t> sourceReference;
+  uint32_t sourceReference = LLDB_DAP_INVALID_SRC_REF;
 
   /// A hint for how to present the source in the UI. A value of `deemphasize`
   /// can be used to indicate that the source is not available or that it is
@@ -424,7 +424,19 @@ struct Source {
   /// sessions. The client should not interpret the data.
   std::optional<SourceLLDBData> adapterData;
 
-  // unsupported keys: origin, sources, checksums
+  /**
+   * The origin of this source. For example, 'internal module', 'inlined content
+   * from source map', etc.
+   */
+  std::string origin;
+
+  /**
+   * A list of sources that are related to this source. These may be the source
+   * that generated this source.
+   */
+  std::vector<Source> sources;
+
+  // unsupported keys: checksums
 };
 bool fromJSON(const llvm::json::Value &, Source::PresentationHint &,
               llvm::json::Path);

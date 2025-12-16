@@ -1195,6 +1195,16 @@ bool fromJSON(const llvm::json::Value &, PauseArguments &, llvm::json::Path);
 /// field is required.
 using PauseResponse = VoidResponse;
 
+/// Arguments for `loadedSources` request.
+using LoadedSourcesArguments = EmptyArguments;
+
+/// Response to `loadedSources` request.
+struct LoadedSourcesResponseBody {
+  /// Set of loaded sources.
+  std::vector<Source> sources;
+};
+llvm::json::Value toJSON(const LoadedSourcesResponseBody &);
+
 } // namespace lldb_dap::protocol
 
 #endif

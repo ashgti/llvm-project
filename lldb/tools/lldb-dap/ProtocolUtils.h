@@ -15,8 +15,7 @@
 
 #include "ExceptionBreakpoint.h"
 #include "Protocol/ProtocolTypes.h"
-
-#include "lldb/API/SBAddress.h"
+#include "lldb/API/SBModule.h"
 
 namespace lldb_dap {
 
@@ -39,16 +38,6 @@ namespace lldb_dap {
 std::optional<protocol::Module> CreateModule(const lldb::SBTarget &target,
                                              lldb::SBModule &module,
                                              bool id_only = false);
-
-/// Create a "Source" JSON object as described in the debug adapter definition.
-///
-/// \param[in] file
-///     The SBFileSpec to use when populating out the "Source" object
-///
-/// \return
-///     An optional "Source" JSON object that follows the formal JSON
-///     definition outlined by Microsoft.
-std::optional<protocol::Source> CreateSource(const lldb::SBFileSpec &file);
 
 /// Checks if the given source is for assembly code.
 bool IsAssemblySource(const protocol::Source &source);

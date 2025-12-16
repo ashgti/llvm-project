@@ -17,6 +17,7 @@
 #include "OutputRedirector.h"
 #include "ProgressEvent.h"
 #include "Protocol/ProtocolBase.h"
+#include "Protocol/ProtocolEvents.h"
 #include "Protocol/ProtocolRequests.h"
 #include "Protocol/ProtocolTypes.h"
 #include "SourceBreakpoint.h"
@@ -79,6 +80,24 @@ enum DAPBroadcasterBits {
 enum class ReplMode { Variable = 0, Command, Auto };
 
 using DAPTransport = lldb_private::transport::JSONTransport<ProtocolDescriptor>;
+
+class SourceTracker {
+public:
+  SourceTracker(DAP &d);
+  ~SourceTracker() = default;
+
+  std::vector<protocol::Source> ResetAndGetSources();
+  void OnModuleEvent(lldb::SBModule &module, uint32_t event_mask);
+
+  std::optional<protocol::Source> CreateSource(const lldb::SBFileSpec &spec);
+
+private:
+  void OnSourceEvent(const lldb::SBFileSpec &spec, uint32_t event_mask);
+  void Send(protocol::Source, protocol::LoadedSourceEventBody::Reason reason);
+  DAP &dap;
+  std::mutex m_mutex;
+  std::set<std::string> m_sources_list;
+};
 
 struct DAP final : public DAPTransport::MessageHandler {
   friend class DAPSessionManager;
@@ -173,6 +192,10 @@ struct DAP final : public DAPTransport::MessageHandler {
   std::mutex modules_mutex;
   llvm::StringSet<> modules;
   /// @}
+
+  /// Keep track of all the sources our client knows about: either through the
+  /// loadedSources request or the source events.
+  SourceTracker source_tracker;
 
   /// Number of lines of assembly code to show when no debug info is available.
   static constexpr uint32_t k_number_of_assembly_lines_for_nodebug = 32;

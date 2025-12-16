@@ -28,12 +28,11 @@ BreakpointLocationsRequestHandler::Run(
   // Find all relevant lines & columns.
   std::vector<std::pair<uint32_t, uint32_t>> locations;
   if (args.source.sourceReference) {
-    locations = GetAssemblyBreakpointLocations(*args.source.sourceReference,
+    locations = GetAssemblyBreakpointLocations(args.source.sourceReference,
                                                start_line, end_line);
   } else {
-    std::string path = args.source.path.value_or("");
     locations = GetSourceBreakpointLocations(
-        std::move(path), start_line, start_column, end_line, end_column);
+        args.source.path, start_line, start_column, end_line, end_column);
   }
 
   // The line entries are sorted by addresses, but we must return the list

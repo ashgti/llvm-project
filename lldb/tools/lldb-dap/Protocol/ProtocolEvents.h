@@ -117,6 +117,19 @@ struct MemoryEventBody {
 };
 llvm::json::Value toJSON(const MemoryEventBody &);
 
+/// The event indicates that some source has been added, changed, or removed
+/// from the set of all loaded sources.
+struct LoadedSourceEventBody {
+  enum Reason : unsigned { eReasonNew, eReasonChanged, eReasonRemoved };
+  /// The reason for the event.
+  /// Values: 'new', 'changed', 'removed'
+  Reason reason;
+
+  /// The new, changed, or removed source.
+  Source source;
+};
+llvm::json::Value toJSON(const LoadedSourceEventBody &);
+
 } // end namespace lldb_dap::protocol
 
 #endif

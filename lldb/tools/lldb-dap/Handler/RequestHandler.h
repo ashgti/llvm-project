@@ -340,6 +340,20 @@ public:
   void PostRun() const override;
 };
 
+class LoadedSourcesRequestHandler
+    : public RequestHandler<
+          protocol::LoadedSourcesArguments,
+          llvm::Expected<protocol::LoadedSourcesResponseBody>> {
+public:
+  using RequestHandler::RequestHandler;
+  static llvm::StringLiteral GetCommand() { return "loadedSources"; }
+  FeatureSet GetSupportedFeatures() const override {
+    return {protocol::eAdapterFeatureLoadedSourcesRequest};
+  }
+  llvm::Expected<protocol::LoadedSourcesResponseBody>
+  Run(const protocol::LoadedSourcesArguments &) const override;
+};
+
 class RestartRequestHandler : public LegacyRequestHandler {
 public:
   using LegacyRequestHandler::LegacyRequestHandler;

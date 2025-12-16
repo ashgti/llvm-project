@@ -138,7 +138,7 @@ void LocationsRequestHandler::operator()(
     }
 
     const std::optional<protocol::Source> source =
-        CreateSource(line_entry.GetFileSpec());
+        dap.source_tracker.CreateSource(line_entry.GetFileSpec());
     if (!source) {
       response["success"] = false;
       response["message"] = "Failed to resolve file path for location";
@@ -162,7 +162,7 @@ void LocationsRequestHandler::operator()(
     }
 
     const std::optional<protocol::Source> source =
-        CreateSource(decl.GetFileSpec());
+        dap.source_tracker.CreateSource(decl.GetFileSpec());
     if (!source) {
       response["success"] = false;
       response["message"] = "Failed to resolve file path for location";

@@ -57,7 +57,7 @@ llvm::Error SourceBreakpoint::SetBreakpoint(const protocol::Source &source) {
         return error;
     } else {
       if (llvm::Error error = CreateAssemblyBreakpointWithSourceReference(
-              *source.sourceReference))
+              source.sourceReference))
         return error;
     }
   } else {
@@ -79,9 +79,8 @@ void SourceBreakpoint::UpdateBreakpoint(const SourceBreakpoint &request_bp) {
 }
 
 void SourceBreakpoint::CreatePathBreakpoint(const protocol::Source &source) {
-  const auto source_path = source.path.value_or("");
   lldb::SBFileSpecList module_list;
-  m_bp = m_dap.target.BreakpointCreateByLocation(source_path.c_str(), m_line,
+  m_bp = m_dap.target.BreakpointCreateByLocation(source.path.c_str(), m_line,
                                                  m_column, 0, module_list);
 }
 

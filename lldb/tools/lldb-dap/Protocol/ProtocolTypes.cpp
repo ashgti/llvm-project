@@ -10,7 +10,6 @@
 #include "JSONUtils.h"
 #include "ProtocolUtils.h"
 #include "lldb/lldb-defines.h"
-#include "lldb/lldb-types.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ErrorHandling.h"
@@ -44,10 +43,12 @@ bool fromJSON(const json::Value &Params, Source::PresentationHint &PH,
 
 bool fromJSON(const json::Value &Params, Source &S, json::Path P) {
   json::ObjectMapper O(Params, P);
-  return O && O.map("name", S.name) && O.map("path", S.path) &&
-         O.map("presentationHint", S.presentationHint) &&
-         O.map("sourceReference", S.sourceReference) &&
-         O.map("adapterData", S.adapterData);
+  return O && O.mapOptional("name", S.name) && O.mapOptional("path", S.path) &&
+         O.mapOptional("presentationHint", S.presentationHint) &&
+         O.mapOptional("sourceReference", S.sourceReference) &&
+         O.mapOptional("adapterData", S.adapterData) &&
+         O.mapOptional("origin", S.origin) &&
+         O.mapOptional("sources", S.sources);
 }
 
 llvm::json::Value toJSON(Source::PresentationHint hint) {
@@ -63,17 +64,26 @@ llvm::json::Value toJSON(Source::PresentationHint hint) {
 }
 
 llvm::json::Value toJSON(const Source &S) {
+  // Ensure the source object is valid.
+  assert(S.sourceReference != LLDB_DAP_INVALID_SRC_REF ||
+         !S.path.empty() && "Source must have a path or a sourceReference");
+
   json::Object result;
-  if (S.name)
-    result.insert({"name", *S.name});
-  if (S.path)
-    result.insert({"path", *S.path});
-  if (S.sourceReference && (*S.sourceReference > LLDB_DAP_INVALID_SRC_REF))
-    result.insert({"sourceReference", *S.sourceReference});
+
+  if (!S.path.empty())
+    result.insert({"path", S.path});
+  if (S.sourceReference != LLDB_DAP_INVALID_SRC_REF)
+    result.insert({"sourceReference", S.sourceReference});
+  if (!S.name.empty())
+    result.insert({"name", S.name}); // Only include name if path is absent.
   if (S.presentationHint)
     result.insert({"presentationHint", *S.presentationHint});
   if (S.adapterData)
     result.insert({"adapterData", *S.adapterData});
+  if (!S.origin.empty())
+    result.insert({"origin", S.origin});
+  if (!S.sources.empty())
+    result.insert({"sources", S.sources});
 
   return result;
 }
