@@ -644,25 +644,25 @@ llvm::json::Value toJSON(const Scope &SC) {
     result.insert({"presentationHint", presentationHint});
   }
 
-  if (SC.namedVariables.has_value())
+  if (SC.namedVariables != 0)
     result.insert({"namedVariables", SC.namedVariables});
 
-  if (SC.indexedVariables.has_value())
+  if (SC.indexedVariables != 0)
     result.insert({"indexedVariables", SC.indexedVariables});
 
   if (SC.source.has_value())
     result.insert({"source", SC.source});
 
-  if (SC.line.has_value())
+  if (SC.line != LLDB_INVALID_LINE_NUMBER)
     result.insert({"line", SC.line});
 
-  if (SC.column.has_value())
+  if (SC.column != LLDB_INVALID_COLUMN_NUMBER)
     result.insert({"column", SC.column});
 
-  if (SC.endLine.has_value())
+  if (SC.endLine != LLDB_INVALID_LINE_NUMBER)
     result.insert({"endLine", SC.endLine});
 
-  if (SC.endColumn.has_value())
+  if (SC.endColumn != LLDB_INVALID_COLUMN_NUMBER)
     result.insert({"endColumn", SC.endColumn});
 
   return result;

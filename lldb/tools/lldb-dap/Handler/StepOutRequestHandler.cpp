@@ -40,6 +40,8 @@ Error StepOutRequestHandler::Run(const StepOutArguments &arguments) const {
   // Remember the thread ID that caused the resume so we can set the
   // "threadCausedFocus" boolean value in the "stopped" events.
   dap.focus_tid = thread.GetThreadID();
+  dap.last_step_out_frame_name =
+      thread.GetFrameAtIndex(0).GetDisplayFunctionName();
   lldb::SBError error;
   thread.StepOut(error);
 

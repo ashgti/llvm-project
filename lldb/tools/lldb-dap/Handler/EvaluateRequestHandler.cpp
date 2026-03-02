@@ -15,6 +15,7 @@
 #include "Protocol/ProtocolRequests.h"
 #include "Protocol/ProtocolTypes.h"
 #include "RequestHandler.h"
+#include "lldb/API/SBDeclaration.h"
 #include "lldb/lldb-enumerations.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
@@ -122,7 +123,8 @@ EvaluateRequestHandler::Run(const EvaluateArguments &arguments) const {
     dap.last_valid_variable_expression = std::move(expression);
 
     // Freeze dry the value in case users expand it later in the debug console
-    value = value.Persist();
+    llvm::StringRef name = value.GetName();
+    value = value.Persist().Clone(name.data());
   }
 
   const bool hex = arguments.format ? arguments.format->hex : false;
@@ -132,17 +134,23 @@ EvaluateRequestHandler::Run(const EvaluateArguments &arguments) const {
   body.result = desc.GetResult(evaluate_context);
   body.type = desc.display_type_name;
 
-  if (value.MightHaveChildren() || ValuePointsToCode(value))
-    body.variablesReference =
-        dap.reference_storage.Insert(value, /*is_permanent=*/is_repl_context);
-
   if (lldb::addr_t addr = value.GetLoadAddress(); addr != LLDB_INVALID_ADDRESS)
     body.memoryReference = EncodeMemoryReference(addr);
 
-  if (ValuePointsToCode(value) &&
-      body.variablesReference.Kind() != eReferenceKindInvalid)
-    body.valueLocationReference =
-        PackLocation(body.variablesReference.AsUInt32(), true);
+  if (value.MightHaveChildren() || ValuePointsToCode(value) ||
+      value.GetDeclaration()) {
+    var_ref_t varref = dap.reference_storage.Insert(value, false);
+
+    if (value.MightHaveChildren())
+      body.variablesReference = varref;
+
+    if (value.GetDeclaration().IsValid())
+      body.valueLocationReference =
+          PackLocation(body.variablesReference.AsUInt32(), true);
+    else if (ValuePointsToCode(value))
+      body.valueLocationReference =
+          PackLocation(body.variablesReference.AsUInt32(), false);
+  }
 
   return body;
 }

@@ -1,6 +1,13 @@
+//===----------------------------------------------------------------------===//
+//
+// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
+// See https://llvm.org/LICENSE.txt for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+//
+//===----------------------------------------------------------------------===//
+
 #include "Protocol/DAPTypes.h"
 #include "lldb/API/SBSymbol.h"
-#include "lldb/lldb-enumerations.h"
 
 using namespace llvm;
 namespace lldb_dap::protocol {
@@ -12,6 +19,9 @@ bool fromJSON(const json::Value &E, var_ref_t &Out, json::Path P) {
   P.report("expected unsigned integer");
   return false;
 }
+
+const var_ref_t var_ref_t::k_invalid_var_ref{UINT32_MAX, eReferenceKindInvalid};
+const var_ref_t var_ref_t::k_no_child{0u, eReferenceKindTemporary};
 
 bool fromJSON(const llvm::json::Value &Params, PersistenceData &PD,
               llvm::json::Path P) {

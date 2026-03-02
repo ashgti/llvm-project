@@ -13,18 +13,26 @@
 #include "Protocol/DAPTypes.h"
 #include "Protocol/ProtocolRequests.h"
 #include "Protocol/ProtocolTypes.h"
-#include "ProtocolUtils.h"
 #include "SBAPIExtras.h"
+#include "lldb/API/SBAddress.h"
+#include "lldb/API/SBBlock.h"
 #include "lldb/API/SBDeclaration.h"
 #include "lldb/API/SBFrame.h"
+#include "lldb/API/SBLineEntry.h"
+#include "lldb/API/SBSymbolContext.h"
 #include "lldb/API/SBValue.h"
 #include "lldb/API/SBValueList.h"
+#include "lldb/lldb-defines.h"
+#include "lldb/lldb-enumerations.h"
 #include "lldb/lldb-types.h"
-#include "llvm/ADT/Sequence.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/Support/ErrorHandling.h"
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <optional>
+#include <sys/syslimits.h>
 #include <vector>
 
 using namespace llvm;
@@ -38,40 +46,91 @@ bool HasInnerVarref(lldb::SBValue &v) {
          v.GetDeclaration().IsValid();
 }
 
-template <typename T> StringMap<uint32_t> distinct_names(T &container) {
-  StringMap<uint32_t> variable_name_counts;
-  for (auto variable : container) {
-    if (!variable.IsValid())
-      break;
-    variable_name_counts[GetNonNullVariableName(variable)]++;
+Variable CreateVariable(lldb::SBValue v, var_ref_t var_ref, bool format_hex,
+                        const Configuration &config) {
+  VariableDescription desc(v, config.enableAutoVariableSummaries, format_hex);
+  Variable var;
+  var.name = desc.name;
+  var.value = desc.display_value;
+  var.type = desc.display_type_name;
+
+  if (!desc.evaluate_name.empty())
+    var.evaluateName = desc.evaluate_name;
+
+  // If we have a type with many children, we would like to be able to
+  // give a hint to the IDE that the type has indexed children so that the
+  // request can be broken up in grabbing only a few children at a time. We
+  // want to be careful and only call "v.GetNumChildren()" if we have an array
+  // type or if we have a synthetic child provider producing indexed children.
+  // We don't want to call "v.GetNumChildren()" on all objects as class, struct
+  // and union types don't need to be completed if they are never expanded. So
+  // we want to avoid calling this to only cases where we it makes sense to keep
+  // performance high during normal debugging.
+  //
+  // If we have an array type, say that it is indexed and provide the number
+  // of children in case we have a huge array. If we don't do this, then we
+  // might take a while to produce all children at onces which can delay your
+  // debug session.
+  if (desc.type_obj.IsArrayType()) {
+    var.indexedVariables = v.GetNumChildren();
+  } else if (v.IsSynthetic()) {
+    // For a type with a synthetic child provider, the SBType of "v" won't tell
+    // us anything about what might be displayed. Instead, we check if the first
+    // child's name is "[0]" and then say it is indexed. We call
+    // GetNumChildren() only if the child name matches to avoid a potentially
+    // expensive operation.
+    if (lldb::SBValue first_child = v.GetChildAtIndex(0)) {
+      llvm::StringRef first_child_name = first_child.GetName();
+      if (first_child_name == "[0]") {
+        size_t num_children = v.GetNumChildren();
+        // If we are creating a "[raw]" fake child for each synthetic type, we
+        // have to account for it when returning indexed variables.
+        if (config.enableSyntheticChildDebugging)
+          ++num_children;
+        var.indexedVariables = num_children;
+      }
+    }
   }
-  return variable_name_counts;
+
+  if (v.MightHaveChildren())
+    var.variablesReference = var_ref;
+
+  if (v.GetDeclaration().IsValid())
+    var.valueLocationReference = PackLocation(var_ref.AsUInt32(), true);
+
+  if (ValuePointsToCode(v))
+    var.declarationLocationReference = PackLocation(var_ref.AsUInt32(), false);
+
+  if (lldb::addr_t addr = v.GetLoadAddress(); addr != LLDB_INVALID_ADDRESS)
+    var.memoryReference = addr;
+
+  bool is_readonly = v.GetType().IsAggregateType() ||
+                     v.GetValueType() == lldb::eValueTypeRegisterSet;
+  if (is_readonly) {
+    if (!var.presentationHint)
+      var.presentationHint = {VariablePresentationHint()};
+    var.presentationHint->attributes.push_back("readOnly");
+  }
+
+  return var;
 }
 
 template <typename T>
-std::vector<Variable> make_variables(
-    VariableReferenceStorage &storage, const Configuration &config,
-    const VariablesArguments &args, T &container, bool is_permanent,
-    const std::map<lldb::user_id_t, std::string> &name_overrides = {}) {
+std::vector<Variable>
+MakeVariables(T &container, VariableReferenceStorage &storage,
+              const Configuration &config, const VariablesArguments &args,
+              bool is_permanent) {
   std::vector<Variable> variables;
-
-  // We first find out which variable names are duplicated.
-  StringMap<uint32_t> variable_name_counts = distinct_names(container);
 
   const bool format_hex = args.format ? args.format->hex : false;
   auto start_it = begin(container) + args.start;
   auto end_it = args.count == 0 ? end(container) : start_it + args.count;
 
   // Now we construct the result with unique display variable names.
-  for (; start_it != end_it; start_it++) {
-    lldb::SBValue variable = *start_it;
-    if (!variable.IsValid())
-      break;
-
-    const var_ref_t var_ref =
-        HasInnerVarref(variable)
-            ? storage.Insert(variable, /*is_permanent=*/is_permanent)
-            : var_ref_t(var_ref_t::k_no_child);
+  for (lldb::SBValue variable : llvm::make_range(start_it, end_it)) {
+    const var_ref_t var_ref = HasInnerVarref(variable)
+                                  ? storage.Insert(variable, is_permanent)
+                                  : var_ref_t::k_no_child;
     if (LLVM_UNLIKELY(var_ref.AsUInt32() >=
                       var_ref_t::k_variables_reference_threshold)) {
       DAP_LOG(storage.log,
@@ -85,58 +144,30 @@ std::vector<Variable> make_variables(
     if (LLVM_UNLIKELY(var_ref.Kind() == eReferenceKindInvalid))
       break;
 
-    std::optional<std::string> custom_name;
-    auto name_it = name_overrides.find(variable.GetID());
-    if (name_it != name_overrides.end())
-      custom_name = name_it->second;
-
-    variables.emplace_back(CreateVariable(
-        variable, var_ref, format_hex, config.enableAutoVariableSummaries,
-        config.enableSyntheticChildDebugging,
-        variable_name_counts[GetNonNullVariableName(variable)] > 1,
-        custom_name));
+    variables.emplace_back(
+        CreateVariable(variable, var_ref, format_hex, config));
   }
 
   return variables;
 }
 
-/// A Variable store for fetching variables within a specific scope (locals,
-/// globals, or registers) for a given stack frame.
-class ScopeStore final : public VariableStore {
+class RegisterStore final : public VariableStore {
 public:
-  explicit ScopeStore(ScopeKind kind, const lldb::SBFrame &frame)
-      : m_frame(frame), m_kind(kind) {}
+  explicit RegisterStore(const lldb::SBFrame &frame)
+      : VariableStore(/*is_permanent=*/false), m_frame(frame) {}
 
   Expected<std::vector<Variable>>
   GetVariables(VariableReferenceStorage &storage, const Configuration &config,
                const VariablesArguments &args) override {
     LoadVariables();
-    if (m_error.Fail())
-      return ToError(m_error);
-    return make_variables(storage, config, args, m_children,
-                          /*is_permanent=*/false, m_names);
+    return MakeVariables(m_children, storage, config, args,
+                         /*is_permanent=*/false);
   }
 
   lldb::SBValue FindVariable(llvm::StringRef name) override {
     LoadVariables();
 
-    lldb::SBValue variable;
-    const bool is_name_duplicated = name.contains(" @");
-    // variablesReference is one of our scopes, not an actual variable it is
-    // asking for a variable in locals or globals or registers.
-    const uint32_t end_idx = m_children.GetSize();
-    // Searching backward so that we choose the variable in closest scope
-    // among variables of the same name.
-    for (const uint32_t i : reverse(seq<uint32_t>(0, end_idx))) {
-      lldb::SBValue curr_variable = m_children.GetValueAtIndex(i);
-      std::string variable_name =
-          CreateUniqueVariableNameForDisplay(curr_variable, is_name_duplicated);
-      if (variable_name == name) {
-        variable = curr_variable;
-        break;
-      }
-    }
-    return variable;
+    return m_children.GetFirstValueByName(name.data());
   }
 
   lldb::SBValue GetVariable() const override { return lldb::SBValue(); }
@@ -148,64 +179,25 @@ private:
 
     m_variables_loaded = true;
 
-    // TODO: Support "arguments" and "return value" scope.
-    // At the moment lldb-dap includes the arguments and return_value  into the
-    // "locals" scope.
-    // VS Code only expands the first non-expensive scope. This causes friction
-    // if we add the arguments above the local scope, as the locals scope will
-    // not be expanded if we enter a function with arguments. It becomes more
-    // annoying when the scope has arguments, return_value and locals.
-    switch (m_kind) {
-    case eScopeKindLocals: {
-      // Show return value if there is any (in the local top frame)
-      lldb::SBValue stop_return_value;
-      if (m_frame.GetFrameID() == 0 &&
-          ((stop_return_value = m_frame.GetThread().GetStopReturnValue()))) {
-        // FIXME: Cloning this value seems to change the type summary, see
-        // https://github.com/llvm/llvm-project/issues/183578
-        // m_children.Append(stop_return_value.Clone("(Return Value)"));
-        m_names[stop_return_value.GetID()] = "(Return Value)";
-        m_children.Append(stop_return_value);
-      }
-      lldb::SBValueList locals = m_frame.GetVariables(/*arguments=*/true,
-                                                      /*locals=*/true,
-                                                      /*statics=*/false,
-                                                      /*in_scope_only=*/true);
-      m_children.Append(locals);
-      // Save the error since we cannot insert into the SBValueList
-      m_error = locals.GetError();
-    } break;
-    case eScopeKindGlobals:
-      m_children = m_frame.GetVariables(/*arguments=*/false,
-                                        /*locals=*/false,
-                                        /*statics=*/true,
-                                        /*in_scope_only=*/true);
-      m_error = m_children.GetError();
-      break;
-    case eScopeKindRegisters:
-      m_children = m_frame.GetRegisters();
-      // Change the default format of any pointer sized registers in the first
-      // register set to be the lldb::eFormatAddressInfo so we show the pointer
-      // and resolve what the pointer resolves to. Only change the format if the
-      // format was set to the default format or if it was hex as some registers
-      // have formats set for them.
-      const uint32_t addr_size =
-          m_frame.GetThread().GetProcess().GetAddressByteSize();
-      for (lldb::SBValue reg : m_children.GetValueAtIndex(0)) {
-        const lldb::Format format = reg.GetFormat();
-        if (format == lldb::eFormatDefault || format == lldb::eFormatHex) {
-          if (reg.GetByteSize() == addr_size)
-            reg.SetFormat(lldb::eFormatAddressInfo);
-        }
+    m_children = m_frame.GetRegisters();
+    // Change the default format of any pointer sized registers in the first
+    // register set to be the lldb::eFormatAddressInfo so we show the pointer
+    // and resolve what the pointer resolves to. Only change the format if the
+    // format was set to the default format or if it was hex as some registers
+    // have formats set for them.
+    const uint32_t addr_size =
+        m_frame.GetThread().GetProcess().GetAddressByteSize();
+    for (lldb::SBValue reg : m_children.GetValueAtIndex(0)) {
+      const lldb::Format format = reg.GetFormat();
+      if (format == lldb::eFormatDefault || format == lldb::eFormatHex) {
+        if (reg.GetByteSize() == addr_size)
+          reg.SetFormat(lldb::eFormatAddressInfo);
       }
     }
   }
 
   lldb::SBFrame m_frame;
   lldb::SBValueList m_children;
-  lldb::SBError m_error;
-  std::map<lldb::user_id_t, std::string> m_names;
-  ScopeKind m_kind;
   bool m_variables_loaded = false;
 };
 
@@ -216,7 +208,8 @@ private:
 class ExpandableValueStore final : public VariableStore {
 
 public:
-  explicit ExpandableValueStore(const lldb::SBValue &value) : m_value(value) {}
+  explicit ExpandableValueStore(bool is_permanent, const lldb::SBValue &value)
+      : VariableStore(is_permanent), m_value(value) {}
 
   llvm::Expected<std::vector<protocol::Variable>>
   GetVariables(VariableReferenceStorage &storage,
@@ -239,10 +232,7 @@ public:
       list.Append(synthetic_value);
     }
 
-    const bool is_permanent =
-        args.variablesReference.Kind() == eReferenceKindPermanent;
-    return make_variables(storage, config, args, list, is_permanent,
-                          name_overrides);
+    return MakeVariables(list, storage, config, args, IsPermanent());
   }
 
   lldb::SBValue FindVariable(llvm::StringRef name) override {
@@ -269,26 +259,24 @@ private:
   lldb::SBValue m_value;
 };
 
+/// A Variable store for fetching variables within a specific scope (locals,
+/// globals, blocks, etc.) for a given stack frame.
 class ExpandableValueListStore final : public VariableStore {
 
 public:
-  explicit ExpandableValueListStore(const lldb::SBValueList &list)
-      : m_value_list(list) {}
+  explicit ExpandableValueListStore(bool is_permanent,
+                                    const lldb::SBValueList &list)
+      : VariableStore(is_permanent), m_value_list(list) {}
 
   llvm::Expected<std::vector<protocol::Variable>>
   GetVariables(VariableReferenceStorage &storage,
                const protocol::Configuration &config,
                const protocol::VariablesArguments &args) override {
-    return make_variables(storage, config, args, m_value_list,
-                          /*is_permanent=*/true);
+    return MakeVariables(m_value_list, storage, config, args, IsPermanent());
   }
 
   lldb::SBValue FindVariable(llvm::StringRef name) override {
-    lldb::SBValue variable = m_value_list.GetFirstValueByName(name.data());
-    if (variable.IsValid())
-      return variable;
-
-    return lldb::SBValue();
+    return m_value_list.GetFirstValueByName(name.data());
   }
 
   [[nodiscard]] lldb::SBValue GetVariable() const override {
@@ -302,29 +290,6 @@ private:
 } // namespace
 
 namespace lldb_dap {
-
-protocol::Scope CreateScope(ScopeKind kind, var_ref_t variablesReference,
-                            bool expensive) {
-  protocol::Scope scope;
-  scope.variablesReference = variablesReference;
-  scope.expensive = expensive;
-
-  switch (kind) {
-  case eScopeKindLocals:
-    scope.presentationHint = protocol::Scope::eScopePresentationHintLocals;
-    scope.name = "Locals";
-    break;
-  case eScopeKindGlobals:
-    scope.name = "Globals";
-    break;
-  case eScopeKindRegisters:
-    scope.presentationHint = protocol::Scope::eScopePresentationHintRegisters;
-    scope.name = "Registers";
-    break;
-  }
-
-  return scope;
-}
 
 lldb::SBValue VariableReferenceStorage::GetVariable(var_ref_t var_ref) {
   const ReferenceKind kind = var_ref.Kind();
@@ -342,29 +307,137 @@ lldb::SBValue VariableReferenceStorage::GetVariable(var_ref_t var_ref) {
   return {};
 }
 
-var_ref_t VariableReferenceStorage::Insert(const lldb::SBValue &variable,
-                                           bool is_permanent) {
-  if (is_permanent)
-    return m_permanent_kind_pool.Add<ExpandableValueStore>(variable);
+var_ref_t VariableReferenceStorage::Insert(lldb::SBValue &variable,
+                                           bool permanent) {
+  if (permanent)
+    return m_permanent_kind_pool.Add<ExpandableValueStore>(true, variable);
 
-  return m_temporary_kind_pool.Add<ExpandableValueStore>(variable);
+  return m_temporary_kind_pool.Add<ExpandableValueStore>(false, variable);
 }
 
-var_ref_t VariableReferenceStorage::Insert(const lldb::SBValueList &values) {
-  return m_permanent_kind_pool.Add<ExpandableValueListStore>(values);
+var_ref_t VariableReferenceStorage::Insert(const lldb::SBValueList &values,
+                                           bool permanent) {
+  if (permanent)
+    return m_permanent_kind_pool.Add<ExpandableValueListStore>(true, values);
+
+  return m_temporary_kind_pool.Add<ExpandableValueListStore>(false, values);
 }
 
-std::vector<protocol::Scope>
-VariableReferenceStorage::Insert(const lldb::SBFrame &frame) {
-  auto create_scope = [&](ScopeKind kind) {
-    const var_ref_t var_ref =
-        m_temporary_kind_pool.Add<ScopeStore>(kind, frame);
-    const bool is_expensive = kind != eScopeKindLocals;
-    return CreateScope(kind, var_ref, is_expensive);
-  };
+std::vector<Scope>
+VariableReferenceStorage::Insert(lldb::SBFrame &frame,
+                                 llvm::StringRef last_step_out_frame) {
+  lldb::user_id_t id = MakeDAPFrameID(frame);
+  auto &frame_storage = m_frame_storage[id];
 
-  return {create_scope(eScopeKindLocals), create_scope(eScopeKindGlobals),
-          create_scope(eScopeKindRegisters)};
+  lldb::SBValue return_value;
+  if (frame_storage.return_value == std::nullopt && frame.GetFrameID() == 0 &&
+      ((return_value = frame.GetThread().GetStopReturnValue()))) {
+    lldb::SBValueList list;
+    list.Append(return_value.Clone("(Return value)"));
+    frame_storage.return_value = Insert(list, /*permanent=*/false);
+  }
+
+  for (lldb::SBBlock block = frame.GetBlock(); block;
+       block = block.GetParent()) {
+    if (frame_storage.blocks.find(block.GetID()) != frame_storage.blocks.end())
+      continue;
+    lldb::SBValueList list =
+        block.GetVariables(frame, /*arguments=*/true,
+                           /*locals=*/true,
+                           /*statics=*/true, lldb::eDynamicDontRunTarget);
+    frame_storage.blocks[block.GetID()] =
+        list.GetSize() ? Insert(list, /*permanent=*/false)
+                       : var_ref_t::k_invalid_var_ref;
+  }
+
+  if (frame_storage.static_storage == std::nullopt) {
+    lldb::SBValueList list =
+        frame.GetVariables(/*arguments=*/false, /*locals=*/false,
+                           /*statics=*/true, /*in_scope_only=*/true);
+    frame_storage.static_storage = list.GetSize()
+                                       ? Insert(list, /*permanent=*/false)
+                                       : var_ref_t::k_invalid_var_ref;
+  }
+
+  if (frame_storage.registers == std::nullopt)
+    frame_storage.registers = m_temporary_kind_pool.Add<RegisterStore>(frame);
+
+  std::vector<Scope> scopes;
+  if (frame_storage.return_value != std::nullopt) {
+    Scope s;
+    s.name = std::string("Return value: ") +
+             (last_step_out_frame.empty() ? frame.GetDisplayFunctionName()
+                                          : last_step_out_frame.data());
+    s.presentationHint = Scope::eScopePresentationHintReturnValue;
+    s.variablesReference = *frame_storage.return_value;
+    s.indexedVariables = 1;
+    scopes.push_back(s);
+  }
+
+  lldb::SBBlock frame_block = frame.GetFrameBlock();
+  for (lldb::SBBlock block = frame.GetBlock();
+       block && frame_storage.blocks[block.GetID()];
+       block = block.GetParent()) {
+    Scope s;
+    if (block == frame_block) {
+      s.presentationHint = protocol::Scope::eScopePresentationHintArguments;
+      s.name = std::string("Locals: ") + frame.GetDisplayFunctionName();
+    } else {
+      s.presentationHint = protocol::Scope::eScopePresentationHintLocals;
+      std::string name = "Block: ";
+      for (uint32_t i = 0; i < block.GetNumRanges(); i++) {
+        lldb::SBAddress start = block.GetRangeStartAddress(i);
+        lldb::SBAddress end = block.GetRangeEndAddress(i);
+        name += llvm::formatv("[{0:x}-{1:x}) ", start.GetFileAddress(),
+                              end.GetFileAddress())
+                    .str();
+      }
+      s.name = name.substr(0, name.size() - 1);
+    }
+
+    for (uint32_t i = 0; i < block.GetNumRanges(); i++) {
+      lldb::SBAddress start = block.GetRangeStartAddress(i);
+      lldb::SBAddress end = block.GetRangeEndAddress(i);
+      lldb::SBLineEntry line_entry = start.GetLineEntry();
+      if (start && line_entry) {
+        std::array<char, PATH_MAX> path = {0};
+        auto len = line_entry.GetFileSpec().GetPath(path.data(), PATH_MAX);
+        Source src;
+        src.path = llvm::StringRef(path.data(), len);
+        s.source = src;
+        s.line = std::min(line_entry.GetLine(), s.line);
+        s.column = line_entry.GetColumn();
+
+        if (end && ((line_entry = end.GetLineEntry()))) {
+          s.endLine =
+              std::max(line_entry.GetLine(),
+                       s.endLine == LLDB_INVALID_LINE_NUMBER ? 0 : s.endLine);
+          s.endColumn = line_entry.GetColumn();
+        }
+      }
+    }
+
+    s.variablesReference = frame_storage.blocks[block.GetID()];
+    scopes.push_back(s);
+  }
+
+  if (frame_storage.static_storage && *frame_storage.static_storage) {
+    Scope s;
+    s.name = std::string("Static: ") + frame.GetDisplayFunctionName();
+    s.variablesReference = *frame_storage.static_storage;
+    s.expensive = true;
+    scopes.push_back(s);
+  }
+
+  if (frame_storage.registers && *frame_storage.registers) {
+    Scope s;
+    s.name = "Registers";
+    s.variablesReference = *frame_storage.registers;
+    s.expensive = true;
+    scopes.push_back(s);
+  }
+
+  return scopes;
 }
 
 lldb::SBValue VariableReferenceStorage::FindVariable(var_ref_t var_ref,

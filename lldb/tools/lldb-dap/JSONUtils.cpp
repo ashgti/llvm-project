@@ -242,37 +242,13 @@ llvm::json::Object CreateEventObject(const llvm::StringRef event_name) {
   return event;
 }
 
-llvm::StringRef GetNonNullVariableName(lldb::SBValue &v) {
-  const llvm::StringRef name = v.GetName();
-  return !name.empty() ? name : "<null>";
-}
-
-std::string CreateUniqueVariableNameForDisplay(lldb::SBValue &v,
-                                               bool is_name_duplicated) {
-  std::string unique_name{};
-  llvm::raw_string_ostream name_builder(unique_name);
-  name_builder << GetNonNullVariableName(v);
-  if (is_name_duplicated) {
-    const lldb::SBDeclaration declaration = v.GetDeclaration();
-    const llvm::StringRef file_name = declaration.GetFileSpec().GetFilename();
-    const uint32_t line = declaration.GetLine();
-
-    if (!file_name.empty() && line != 0 && line != LLDB_INVALID_LINE_NUMBER)
-      name_builder << llvm::formatv(" @ {}:{}", file_name, line);
-    else if (llvm::StringRef location = v.GetLocation(); !location.empty())
-      name_builder << llvm::formatv(" @ {}", location);
-  }
-  return unique_name;
-}
-
-VariableDescription::VariableDescription(
-    lldb::SBValue val, bool auto_variable_summaries, bool format_hex,
-    bool is_name_duplicated, std::optional<llvm::StringRef> custom_name)
+VariableDescription::VariableDescription(lldb::SBValue val,
+                                         bool auto_variable_summaries,
+                                         bool format_hex)
     : val(val) {
-  name = custom_name.value_or(
-      CreateUniqueVariableNameForDisplay(val, is_name_duplicated));
-
+  name = val.GetName();
   type_obj = val.GetType();
+
   const llvm::StringRef type_name = type_obj.GetDisplayTypeName();
   display_type_name = type_name.empty() ? NO_TYPENAME : type_name;
 

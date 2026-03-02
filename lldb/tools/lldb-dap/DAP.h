@@ -117,6 +117,7 @@ struct DAP final : public DAPTransport::MessageHandler {
 
   /// The focused thread for this DAP session.
   lldb::tid_t focus_tid = LLDB_INVALID_THREAD_ID;
+  std::string last_step_out_frame_name;
 
   llvm::once_flag terminated_event_flag;
   bool stop_at_entry = false;

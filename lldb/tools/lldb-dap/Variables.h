@@ -17,37 +17,17 @@
 #include "lldb/API/SBFrame.h"
 #include "lldb/API/SBValue.h"
 #include "lldb/API/SBValueList.h"
+#include "lldb/lldb-types.h"
+#include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ErrorHandling.h"
 
 namespace lldb_dap {
 struct VariableReferenceStorage;
 
-enum ScopeKind : unsigned {
-  eScopeKindLocals,
-  eScopeKindGlobals,
-  eScopeKindRegisters
-};
-
-/// Creates a `protocol::Scope` struct.
-///
-/// \param[in] kind
-///     The kind of scope to create
-///
-/// \param[in] variablesReference
-///     The value to place into the "variablesReference" key
-///
-/// \param[in] expensive
-///     The value to place into the "expensive" key
-///
-/// \return
-///     A `protocol::Scope`
-protocol::Scope CreateScope(ScopeKind kind, var_ref_t variablesReference,
-                            bool expensive);
-
 /// An Interface to get or find specific variables by name.
 class VariableStore {
 public:
-  explicit VariableStore() = default;
+  explicit VariableStore(bool is_permanent) : m_is_permanent(is_permanent) {}
   virtual ~VariableStore() = default;
 
   virtual llvm::Expected<std::vector<protocol::Variable>>
@@ -56,12 +36,16 @@ public:
                const protocol::VariablesArguments &args) = 0;
   virtual lldb::SBValue FindVariable(llvm::StringRef name) = 0;
   virtual lldb::SBValue GetVariable() const = 0;
+  bool IsPermanent() const { return m_is_permanent; }
 
   // Not copyable.
   VariableStore(const VariableStore &) = delete;
   VariableStore &operator=(const VariableStore &) = delete;
   VariableStore(VariableStore &&) = default;
   VariableStore &operator=(VariableStore &&) = default;
+
+private:
+  bool m_is_permanent;
 };
 
 struct VariableReferenceStorage {
@@ -78,18 +62,22 @@ struct VariableReferenceStorage {
 
   /// Insert a new \p variable.
   /// \return variableReference assigned to this expandable variable.
-  var_ref_t Insert(const lldb::SBValue &variable, bool is_permanent);
+  var_ref_t Insert(lldb::SBValue &variable, bool is_permanent);
 
   /// Insert a value list. Used to store references to lldb repl command
   /// outputs.
-  var_ref_t Insert(const lldb::SBValueList &values);
+  var_ref_t Insert(const lldb::SBValueList &values, bool is_permanent);
 
   /// Insert a new frame into temporary storage.
-  std::vector<protocol::Scope> Insert(const lldb::SBFrame &frame);
+  std::vector<protocol::Scope> Insert(lldb::SBFrame &frame,
+                                      llvm::StringRef last_step_out_frame);
 
   lldb::SBValue FindVariable(var_ref_t var_ref, llvm::StringRef name);
 
-  void Clear() { m_temporary_kind_pool.Clear(); }
+  void Clear() {
+    m_temporary_kind_pool.Clear();
+    m_frame_storage.clear();
+  }
 
   VariableStore *GetVariableStore(var_ref_t var_ref);
   Log &log;
@@ -160,6 +148,14 @@ private:
   /// Variables that are alive in this stop state.
   /// Will be cleared when debuggee resumes.
   ReferenceKindPool<protocol::eReferenceKindTemporary> m_temporary_kind_pool;
+  /// Computed values for a given frame.
+  struct FrameStorage {
+    std::optional<var_ref_t> return_value;
+    std::map<lldb::user_id_t, var_ref_t> blocks;
+    std::optional<var_ref_t> static_storage;
+    std::optional<var_ref_t> registers;
+  };
+  std::map<lldb::user_id_t, FrameStorage> m_frame_storage; // keys by frame id.
   /// Variables that persist across entire debug session.
   /// These are the variables evaluated from debug console REPL.
   ReferenceKindPool<protocol::eReferenceKindPermanent> m_permanent_kind_pool;

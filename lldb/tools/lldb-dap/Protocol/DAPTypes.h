@@ -1,4 +1,4 @@
-//===-- DAPTypes.h ---------------------------------------------------===//
+//===----------------------------------------------------------------------===//
 //
 // Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
 // See https://llvm.org/LICENSE.txt for license information.
@@ -43,8 +43,8 @@ private:
   static constexpr uint32_t k_kind_mask = 0xFF;
 
 public:
-  static constexpr uint32_t k_invalid_var_ref = UINT32_MAX;
-  static constexpr uint32_t k_no_child = 0;
+  static const var_ref_t k_invalid_var_ref;
+  static const var_ref_t k_no_child;
 
   explicit constexpr var_ref_t(uint32_t reference, ReferenceKind kind)
       : reference(reference), kind(kind) {}
@@ -69,6 +69,16 @@ public:
   }
 
   [[nodiscard]] constexpr uint32_t Reference() const { return reference; }
+
+  [[nodiscard]] operator bool() const {
+    return *this != k_no_child && *this != k_invalid_var_ref;
+  }
+
+  bool operator==(const var_ref_t &rhs) const {
+    return kind == rhs.kind && reference == rhs.reference;
+  }
+
+  bool operator!=(const var_ref_t &rhs) const { return !(*this == rhs); }
 
   // We should be able to store at least 8 million variables for each store
   // type at every stopped state.

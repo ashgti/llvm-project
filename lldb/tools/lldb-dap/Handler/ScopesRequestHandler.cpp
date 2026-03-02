@@ -36,7 +36,8 @@ ScopesRequestHandler::Run(const ScopesArguments &args) const {
     frame.GetThread().SetSelectedFrame(frame.GetFrameID());
   }
 
-  std::vector<protocol::Scope> scopes = dap.reference_storage.Insert(frame);
+  std::vector<protocol::Scope> scopes =
+      dap.reference_storage.Insert(frame, dap.last_step_out_frame_name);
 
   return ScopesResponseBody{std::move(scopes)};
 }

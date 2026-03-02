@@ -105,18 +105,6 @@ bool DecodeMemoryReference(const llvm::json::Value &v, llvm::StringLiteral key,
 ///     definition outlined by Microsoft.
 llvm::json::Object CreateEventObject(const llvm::StringRef event_name);
 
-/// \return
-///     The variable name of \a value or a default placeholder.
-llvm::StringRef GetNonNullVariableName(lldb::SBValue &value);
-
-/// VSCode can't display two variables with the same name, so we need to
-/// distinguish them by using a suffix.
-///
-/// If the source and line information is present, we use it as the suffix.
-/// Otherwise, we fallback to the variable address or register location.
-std::string CreateUniqueVariableNameForDisplay(lldb::SBValue &v,
-                                               bool is_name_duplicated);
-
 /// Helper struct that parses the metadata of an \a lldb::SBValue and produces
 /// a canonical set of properties that can be sent to DAP clients.
 struct VariableDescription {
@@ -142,8 +130,7 @@ struct VariableDescription {
   lldb::SBValue val;
 
   VariableDescription(lldb::SBValue v, bool auto_variable_summaries,
-                      bool format_hex = false, bool is_name_duplicated = false,
-                      std::optional<llvm::StringRef> custom_name = {});
+                      bool format_hex = false);
 
   /// Returns a description of the value appropriate for the specified context.
   std::string GetResult(protocol::EvaluateContext context);

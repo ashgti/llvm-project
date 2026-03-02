@@ -86,8 +86,8 @@ inline value_iter end(SBValue &T) { return {T, T.GetNumChildren()}; }
 /// @{
 using value_list_iter =
     iter<SBValueList, SBValue, uint32_t, &SBValueList::GetValueAtIndex>;
-inline value_list_iter begin(SBValueList &T) { return {T, 0}; }
-inline value_list_iter end(SBValueList &T) { return {T, T.GetSize()}; }
+inline value_list_iter begin(const SBValueList &T) { return {T, 0}; }
+inline value_list_iter end(const SBValueList &T) { return {T, T.GetSize()}; }
 /// @}
 
 // llvm::raw_ostream print helpers.

@@ -468,12 +468,12 @@ struct Scope {
   /// The number of named variables in this scope.
   /// The client can use this information to present the variables in a paged UI
   /// and fetch them in chunks.
-  std::optional<uint64_t> namedVariables;
+  uint64_t namedVariables = 0;
 
   /// The number of indexed variables in this scope.
   /// The client can use this information to present the variables in a paged UI
   /// and fetch them in chunks.
-  std::optional<uint64_t> indexedVariables;
+  uint64_t indexedVariables = 0;
 
   /// The source for this scope.
   std::optional<Source> source;
@@ -483,20 +483,20 @@ struct Scope {
   bool expensive = false;
 
   /// The start line of the range covered by this scope.
-  std::optional<uint64_t> line;
+  uint32_t line = LLDB_INVALID_LINE_NUMBER;
 
   /// Start position of the range covered by the scope. It is measured in UTF-16
   /// code units and the client capability `columnsStartAt1` determines whether
   /// it is 0- or 1-based.
-  std::optional<uint64_t> column;
+  uint32_t column = LLDB_INVALID_COLUMN_NUMBER;
 
   /// The end line of the range covered by this scope.
-  std::optional<uint64_t> endLine;
+  uint32_t endLine = LLDB_INVALID_LINE_NUMBER;
 
   /// End position of the range covered by the scope. It is measured in UTF-16
   /// code units and the client capability `columnsStartAt1` determines whether
   /// it is 0- or 1-based.
-  std::optional<uint64_t> endColumn;
+  uint32_t endColumn = LLDB_INVALID_COLUMN_NUMBER;
 };
 bool fromJSON(const llvm::json::Value &Params, Scope::PresentationHint &PH,
               llvm::json::Path);
@@ -962,7 +962,7 @@ struct Variable {
   /// children can be retrieved by passing `variablesReference` to the
   /// `variables` request as long as execution remains suspended. See 'Lifetime
   /// of Object References' in the Overview section for details.
-  var_ref_t variablesReference{var_ref_t::k_no_child};
+  var_ref_t variablesReference = var_ref_t::k_no_child;
 
   /// The number of named child variables.
   ///
